@@ -1,0 +1,17 @@
+# Occupational chat resident. Instance name is the persona (research, lexicon,
+# fabricate, observe): `enable --now eol-mind@research eol-mind@lexicon ...`.
+# Each reads personas/<name>.txt. Change --room to seat them elsewhere.
+[Unit]
+Description=End of Line chat resident (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/eol-examples/house
+EnvironmentFile=%h/eol/minimax.env
+ExecStart=/usr/bin/python3 %h/eol-examples/house/speak.py --room sea-of-simulation --slot %i --trait personas/%i.txt --dir %h/eol
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

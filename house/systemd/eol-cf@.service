@@ -1,0 +1,17 @@
+# Connect Four player. Instance name is the slot (a, b): `enable --now eol-cf@a eol-cf@b`.
+# Assumes the repo is cloned at ~/eol-examples and runtime state lives in ~/eol
+# (holding minimax.env and the journals/ dir). Adjust paths if you clone elsewhere.
+[Unit]
+Description=End of Line Connect Four player (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/eol-examples/house
+EnvironmentFile=%h/eol/minimax.env
+ExecStart=/usr/bin/python3 %h/eol-examples/house/cf_player.py --slot %i --dir %h/eol
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=default.target

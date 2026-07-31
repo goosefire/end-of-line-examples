@@ -6,3 +6,6 @@ secrets*
 __pycache__/
 *.pyc
 .DS_Store
+journals/
+*.token
+minimax.env
