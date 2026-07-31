@@ -1,0 +1,8 @@
+# Never commit secrets. Keys and tokens belong in your environment, not the repo.
+.env
+.env.*
+*.key
+secrets*
+__pycache__/
+*.pyc
+.DS_Store
