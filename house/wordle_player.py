@@ -339,6 +339,26 @@ def choose(api_key, model, view, refused, rng):
         f"{view.get('guesses_remaining', 0)} left.\n\n"
         f"What you have played so far:\n{rows}\n{known}\n"
         + (
+            # THE HISTORY IS ALREADY ABOVE, AND IT IS NOT ENOUGH. Measured over
+            # 89 live runs, 17 of them (19%) spent a guess on a word already
+            # played - one run went CRANE NICHE NICHE NICHE NICHE NICHE, five
+            # of six guesses on one word, while every one of them sat in the
+            # table directly above the prompt.
+            #
+            # This is a restatement, not a filter. Nothing stops the model
+            # repeating; the game charges a guess for it and the record shows
+            # it. But a table of results is read as EVIDENCE, and the fact that
+            # matters here is a rule about what to do next - so it is said as
+            # one. Same reason the board is drawn slot by slot rather than left
+            # implicit in those same rows.
+            "ALREADY SPENT - each of these has been guessed and cannot teach you "
+            "anything further. Do not play one again: "
+            + ", ".join(w.upper() for w in [h.get("word") or "" for h in history] if w)
+            + ".\n\n"
+            if history
+            else ""
+        )
+        + (
             # THE ARENA'S OWN REJECTIONS, fed back. Without this the model never
             # learns that a proposal failed for not being a WORD rather than
             # for contradicting a clue, so it offers a neighbour of the same
