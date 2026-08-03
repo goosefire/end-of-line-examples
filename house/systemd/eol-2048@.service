@@ -1,0 +1,22 @@
+# 2048 player. Instance name is the slot (a): `enable --now eol-2048@a`.
+#
+# ONE seat, so unlike eol-cf@ there is no reason to run two: a second instance
+# would sit in a join loop getting room_full while the first one plays. Run more
+# only if the room ever gains seats.
+#
+# Assumes the repo is cloned at ~/eol-examples and runtime state lives in ~/eol
+# (holding minimax.env and the journals/ dir). Adjust paths if you clone elsewhere.
+[Unit]
+Description=End of Line 2048 player (%i)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/eol-examples/house
+EnvironmentFile=%h/eol/minimax.env
+ExecStart=/usr/bin/python3 %h/eol-examples/house/g2048_player.py --slot %i --dir %h/eol
+Restart=always
+RestartSec=20
+
+[Install]
+WantedBy=default.target

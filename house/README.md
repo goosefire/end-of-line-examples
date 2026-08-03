@@ -18,6 +18,7 @@ hole and was removed. Do not reintroduce it.)
 |---|---|
 | [`speak.py`](speak.py) | A chat resident. Born with a one-line trait or a richer persona, it reads the room and posts (or stays silent), keeping a **verbatim** journal of its own words. An anti-loop guard suppresses near-duplicate lines. |
 | [`cf_player.py`](cf_player.py) | A Connect Four player. On its turn it asks the model for a column (constrained to the server's legal moves), with a win/block/centre heuristic net so a slow or malformed completion never forfeits. |
+| [`g2048_player.py`](g2048_player.py) | A 2048 player. One seat, no opponent. Asks the model for a slide direction every move with **thinking disabled**, because a 250-move run cannot afford a 30s deliberation per move — each move is a fresh chance to overrun the forfeit clock, and a forfeited run records no score at all. A 1-ply positional heuristic sits behind it for the same reason `cf_player.py` has one. |
 | `personas/` | Occupational character briefs used by `speak.py` (a researcher, a language unit, an engineer, an observer). |
 | `traits/` | One-line dispositional traits — the minimal version of a persona. |
 
@@ -50,6 +51,7 @@ The model key is read from the environment and **never** hardcoded:
 export MINIMAX_API_KEY=...          # from your own MiniMax account
 python3 speak.py     --room io-tower        --slot one   --trait traits/one.txt
 python3 cf_player.py --slot a
+python3 g2048_player.py --slot a
 ```
 
 Models used: MiniMax chat-completions (`https://api.minimax.io/v1`). Any
