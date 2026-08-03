@@ -41,12 +41,17 @@ So: MiniMax-M3, thinking left ON, 4000 tokens. The first run written against
 this file used M2.7 at 2500 and fell back to the word list on five of six
 guesses, which is exactly what an empty completion looks like from the outside
 
-THE FALLBACK IS DELIBERATELY WEAK, and that is the point. When the model
-returns nothing usable, this plays the first word from a short embedded list
-that is consistent with the feedback so far. That is enough to keep a run from
-stalling and nowhere near enough to carry it — so a board built on this player
-still ranks the MODEL. Every fallback is logged as one, so a run that was
-really played by the list is visible as such rather than quietly banked.
+THE MODEL IS NOT FILTERED. Whatever word it names is what the arena receives —
+no consistency check, no repeat check, nothing. An earlier version gated on
+"could this still be the answer" and re-asked eight times when it could not,
+which is stricter than the game (that is hard mode), rejects the throwaway
+probes that are often the strongest play, and quietly put a THIRD of the guesses
+on a public board into this file's word list rather than the model's mouth. If
+the model plays a contradicted word or repeats itself, that is a real result
+about the model and it belongs on the record.
+
+The fallback now fires only when the reply contains no word at all — an absent
+guess rather than a bad one. That was 7 events where the gate caused 54.
 
 The word list and the consistency filter are this program's own business, not
 the arena's — the arena publishes rules and withholds strategy, so that a board
@@ -204,15 +209,6 @@ def marks_for(answer, guess):
     return out
 
 
-def consistent(word, history):
-    """Would `word` have produced every mark we have already been given?"""
-    for h in history:
-        past = h.get("word") or ""
-        if len(past) != 5 or marks_for(word, past) != list(h.get("marks") or []):
-            return False
-    return True
-
-
 def violations(word, history):
     """How many past rows this word contradicts. 0 means it could be the answer."""
     n = 0
@@ -223,29 +219,26 @@ def violations(word, history):
     return n
 
 
-def fallback(history, tried, rng):
-    """The weak player of last resort, and two things it must not do.
+def fallback(history, rng):
+    """The only case where this program has nothing to send.
 
-    It must not PLAY A WORD THE FEEDBACK HAS ALREADY RULED OUT. The first
-    version fell through to "the first untried word in the list", which spends
-    a guess to learn nothing - the marks it comes back with are the marks we
-    could already have computed. Measured over three live hours, that path
-    produced 162 of 409 guesses and burned most of them. Now the list is ranked
-    by how many rows a word contradicts, so the last resort is at least the
-    least-wrong word available rather than the earliest one.
+    Reached when the model returned no parseable word at all - not a bad word,
+    NO word. There is nothing to relay, so something has to be picked or the
+    turn clock runs out for no reason. Measured before the gate came out, that
+    was 7 events against 54 caused by the gate itself.
 
-    It must not PLAY THE SAME WORDS IN THE SAME ORDER. Scanning a fixed list
-    meant every hard run opened SLATE, AUDIO, RAISE, STONE - 65% of all
-    fallbacks were the first five entries, so the room looked like one program
-    with a tic. Ties are broken randomly, which costs nothing and stops the
-    fallback having a signature.
+    Ranked by how many rows a word contradicts, ties broken randomly. Not
+    because the harness should be playing well - it should barely be playing at
+    all - but because scanning a fixed list in order gave every hard run the
+    same opening (SLATE, AUDIO, RAISE, STONE was 65% of all fallbacks) and made
+    one program look like a tic to anyone watching the room.
     """
-    pool = [w for w in FALLBACK if w not in tried] or list(FALLBACK)
+    pool = list(FALLBACK)
     rng.shuffle(pool)
     return min(pool, key=lambda w: violations(w, history))
 
 
-def choose(api_key, model, view, tried, refused, rng):
+def choose(api_key, model, view, refused, rng):
     history = view.get("history") or []
     letters = view.get("letters") or {}
 
@@ -281,9 +274,11 @@ def choose(api_key, model, view, tried, refused, rng):
         "holds it once, you get one hit or near and one miss. So miss means 'no more of "
         "these', NOT 'none at all'.\n"
         "- The answer is always a common word, though you may guess any real word.\n\n"
-        "Every guess must be consistent with everything you have been told: keep each hit in "
-        "its position, include every near somewhere it has not already failed, and use no "
-        "letter more times than the marks allow.\n\n"
+        "Usually your guess should fit every clue: keep each hit in its position, include "
+        "every near somewhere it has not already failed, and use no letter more times than "
+        "the marks allow. But a deliberate probe that CANNOT be the answer is legal, and "
+        "with several candidates left it is often the stronger play - one throwaway word "
+        "can split four candidates where a candidate guess only tests one. Your call.\n\n"
         # Without this the model scans the dictionary aloud and never reaches an
         # answer — it ran out of tokens mid-enumeration at 2500 AND at 6000.
         "Work out the constraints, then name ONE word that satisfies them and commit to it. "
@@ -311,24 +306,37 @@ def choose(api_key, model, view, tried, refused, rng):
         + 'Reply with JSON only, no other text: {"word": "<your five-letter guess>"}'
     )
 
-    # Propose, check, re-ask. Each attempt is ~1s with thinking disabled, so
-    # three of them cost a fraction of one deliberating call — and unlike that
-    # call, they end with an answer. The check is `consistent()`, which is the
-    # arena's own marking rule run backwards: would this word have produced
-    # every mark we were already given? A word that fails it cannot be the
-    # answer, so refusing it costs nothing and saves a guess.
+    # THE MODEL'S WORD GOES TO THE ARENA, WHATEVER IT IS.
     #
-    # The MODEL still picks every word. This only ever says no.
-    attempts = []
-    for attempt in range(8):
-        extra = ""
-        if attempts:
-            extra = (
-                "\n\nYou already proposed " + ", ".join(w.upper() for w in attempts)
-                + ". Each of those contradicts the feedback above or has been guessed already. "
-                "Re-read the clues and name a DIFFERENT word that fits every one of them."
-            )
-        out = generate(api_key, model, sysp, userp + extra)
+    # This used to gate on consistency - is this word still a possible
+    # answer? - and re-ask up to eight times when it was not. That was wrong in
+    # two ways and it cost a third of every board.
+    #
+    # It is stricter than the game. Requiring each guess to be a possible answer
+    # is Wordle "hard mode", which nothing here imposes, and STRONG PLAY BREAKS
+    # IT DELIBERATELY: down to STA_E with four candidates, a throwaway probe
+    # that cannot be the answer splits the set in one guess where a candidate
+    # guess splits it in four. The gate rejected exactly that and called it
+    # confusion, because it could not tell a probe from a mistake - it never
+    # looked at why.
+    #
+    # And it hid the thing the board exists to measure. 516 of 542 rejections
+    # were the gate; the loop stopped converting after two tries (98, 81, 72,
+    # 64, 62, 57, 54, 54) and 54 turns fell through to the word list, so a THIRD
+    # of the guesses on a public leaderboard were this file's opinion rather
+    # than the model's. A file that filters its model and then claims to rank it
+    # is lying on the record.
+    #
+    # Repeats are not blocked either, for the same reason one level down. Every
+    # word already played is in `history`, in the prompt, with its marks. A
+    # program that plays DICES twice has failed to read its own board, that is a
+    # real result about the model, and the game charges a guess for it. Blocking
+    # it would be the harness covering for the thing under test.
+    #
+    # So the only loop left is for output with NO word in it, which is not a bad
+    # guess but an absent one.
+    for attempt in range(3):
+        out = generate(api_key, model, sysp, userp)
         word = None
         try:
             m = re.search(r"\{.*\}", out, re.S)
@@ -341,21 +349,12 @@ def choose(api_key, model, view, tried, refused, rng):
         if not word or not re.fullmatch(r"[a-z]{5}", word or ""):
             m = re.search(r"\b([a-z]{5})\b", out.lower())
             word = m.group(1) if m else None
-        if not word or not re.fullmatch(r"[a-z]{5}", word):
-            log(f"attempt {attempt + 1}: nothing usable · raw({len(out)}): {out[:90]!r}")
-            continue
-        if word in tried:
-            log(f"attempt {attempt + 1}: {word.upper()} already played")
-            attempts.append(word)
-            continue
-        if not consistent(word, history):
-            log(f"attempt {attempt + 1}: {word.upper()} contradicts the feedback")
-            attempts.append(word)
-            continue
-        return word, False
+        if word and re.fullmatch(r"[a-z]{5}", word):
+            return word, False
+        log(f"attempt {attempt + 1}: no word in the reply · raw({len(out)}): {out[:90]!r}")
 
-    w = fallback(history, tried, rng)
-    log(f"model gave nothing consistent in 8 tries; FALLBACK -> {w}")
+    w = fallback(history, rng)
+    log(f"model returned no word in 3 tries; FALLBACK -> {w}")
     return w, True
 
 
@@ -391,7 +390,6 @@ def main():
     key = open(tokpath).read().strip() if os.path.exists(tokpath) else None
     last_ply = -1
     last_move_at = 0.0
-    tried = set()
     played = 0
     refused = []  # words THIS run the arena said are not words
     rng = random.Random()
@@ -435,7 +433,7 @@ def main():
             # reports a run this process never touched.
             if a.once and played:
                 return
-            last_ply, tried, played, refused = -1, set(), 0, []
+            last_ply, played, refused = -1, 0, []
             time.sleep(8)  # a fresh word is dealt after the intermission
             continue
         if not view.get("your_turn"):
@@ -445,7 +443,7 @@ def main():
             time.sleep(2)
             continue
 
-        word, fell_back = choose(api_key, a.model, view, tried, refused, rng)
+        word, fell_back = choose(api_key, a.model, view, refused, rng)
 
         gap = time.time() - last_move_at
         if gap < MIN_MOVE_GAP:
@@ -460,7 +458,6 @@ def main():
         if st in (200, 201):
             last_ply = view.get("ply", 0)
             played += 1
-            tried.add(word)
             log(f"guess {len(view.get('history') or []) + 1}: {word.upper()}"
                 + (" (fallback)" if fell_back else ""))
         elif r.get("error") == "rate_limited":
@@ -470,7 +467,6 @@ def main():
         elif r.get("error") == "illegal_move":
             # A free retry in a solo room — not a word, or the wrong shape. The
             # clock keeps running, so remember it and do not offer it again.
-            tried.add(word)
             # Remembered for the NEXT prompt, not just for this loop: the model
             # has to be told it invented a word or it invents another one.
             if 'not in the word list' in (r.get('message') or ''):
