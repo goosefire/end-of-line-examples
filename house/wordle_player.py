@@ -245,16 +245,58 @@ def choose(api_key, model, view, refused, rng):
     def group(mark):
         return " ".join(sorted(c.upper() for c, m in letters.items() if m == mark)) or "none yet"
 
+    def board(hist):
+        """The grid, as a grid.
+
+        This summary used to read "Letters in the word AND in the right place:
+        B D E R" - an alphabetised bag with the POSITIONS STRIPPED OUT, sitting
+        directly under history rows that carried them correctly. It is the same
+        information degraded, and stated more authoritatively than the good
+        copy above it.
+
+        It explains the failure that started this: with B, R, E and D confirmed
+        but no columns attached, the model was PERMUTING them - BREDR, against
+        an answer of BREED. It had every letter and was guessing the
+        arrangement, because a human sees green tiles nailed to columns and it
+        was handed a set.
+
+        Nothing new is computed here. A green tile is drawn in its column in
+        the real game and a yellow tile in the column it failed at; this is
+        that, in text. What is deliberately still absent is anything the player
+        has to work out - no candidate list, no count of what survives, no
+        per-slot exclusions assembled across rows.
+        """
+        slots = [None] * 5
+        failed = {}
+        for h in hist:
+            w, ms = (h.get("word") or ""), (h.get("marks") or [])
+            for i, (c, m) in enumerate(zip(w, ms)):
+                if m == "hit":
+                    slots[i] = c
+                elif m == "near":
+                    failed.setdefault(c, set()).add(i + 1)
+        line = "  ".join(f"{i + 1}:{(slots[i] or '_').upper()}" for i in range(5))
+        yellow = [
+            f"    {c.upper()} - in the word, but NOT in slot "
+            + "/".join(str(n) for n in sorted(failed[c]))
+            for c in sorted(failed)
+            if c not in [s for s in slots if s]
+        ]
+        return line, yellow
+
     if history:
         rows = "\n".join(
             f"  {i + 1}. {(h.get('word') or '').upper()}   "
             + " · ".join(f"{c}={m}" for c, m in zip(h.get("word") or "", h.get("marks") or []))
             for i, h in enumerate(history)
         )
+        line, yellow = board(history)
         known = (
-            f"\nLetters in the word AND in the right place: {group('hit')}"
-            f"\nLetters in the word but in the WRONG place: {group('near')}"
-            f"\nLetters with no more occurrences left: {group('miss')}\n"
+            "\nTHE BOARD SO FAR - slot by slot. A letter shown IS that slot; _ is unknown:"
+            f"\n    {line}\n"
+            "\nIn the word but not yet placed:\n"
+            + ("\n".join(yellow) if yellow else "    (none)")
+            + f"\n\nNo more of these anywhere: {group('miss')}\n"
         )
     else:
         rows = "  (nothing yet)"
@@ -359,24 +401,42 @@ def choose(api_key, model, view, refused, rng):
     # rate of invented words is untouched and should be - in that same probe two
     # of seven answers (`ducke`, `duree`) were not words, and that is the
     # letter-level weakness the board exists to show.
+    # WRONG LENGTH IS ITS OWN FAILURE, and it was invisible. OVEN, THRONE,
+    # GREN, NAVI, ALTA and BENDED all came back as perfectly good English of
+    # four or six letters; the parser could not match [a-z]{5}, logged "no word
+    # in the reply", and re-asked the identical question without ever
+    # mentioning length. The model was not inventing there - it was failing to
+    # count to five, and nothing told it so.
+    badlen = []
     for attempt in range(3):
         temp = min(1.35, 0.6 + 0.35 * (len(refused) + attempt))
-        out = generate(api_key, model, sysp, userp, temperature=temp)
-        word = None
+        extra = ""
+        if badlen:
+            extra = (
+                "\n\nYour last reply was "
+                + ", ".join(f'"{w.upper()}" ({len(w)} letters)' for w in badlen)
+                + ". The guess must be EXACTLY five letters. Count them before you answer."
+            )
+        out = generate(api_key, model, sysp, userp + extra, temperature=temp)
+        named = None
         try:
             m = re.search(r"\{.*\}", out, re.S)
             if m:
                 obj = json.loads(m.group(0))
                 if isinstance(obj.get("word"), str):
-                    word = obj["word"].strip().lower()
+                    named = obj["word"].strip().lower()
         except Exception:
             pass
-        if not word or not re.fullmatch(r"[a-z]{5}", word or ""):
-            m = re.search(r"\b([a-z]{5})\b", out.lower())
-            word = m.group(1) if m else None
-        if word and re.fullmatch(r"[a-z]{5}", word):
-            return word, False
-        log(f"attempt {attempt + 1}: no word in the reply · raw({len(out)}): {out[:90]!r}")
+        if named and re.fullmatch(r"[a-z]{5}", named):
+            return named, False
+        loose = re.search(r"\b([a-z]{5})\b", out.lower())
+        if loose:
+            return loose.group(1), False
+        if named and re.fullmatch(r"[a-z]+", named):
+            badlen.append(named)
+            log(f"attempt {attempt + 1}: {named.upper()} is {len(named)} letters, not 5")
+        else:
+            log(f"attempt {attempt + 1}: no word in the reply · raw({len(out)}): {out[:90]!r}")
 
     w = fallback(history, rng)
     log(f"model returned no word in 3 tries; FALLBACK -> {w}")
