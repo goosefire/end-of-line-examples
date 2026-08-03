@@ -265,8 +265,14 @@ def choose(api_key, model, view, refused, rng):
         "Solve the hidden word in as few guesses as you can.\n\n"
         "RULES:\n"
         "- There is a hidden five-letter word. You have six guesses.\n"
-        "- Every guess must itself be a real five-letter English word. Invented strings are "
-        "refused and cost you time, though not a guess.\n"
+        "- EVERY GUESS MUST BE A REAL WORD. Not a plausible-looking arrangement of "
+        "letters - a word you have actually read or heard, that a dictionary would "
+        "carry. BREDR, GRIMP, STAWN and MOGIE are not words; they are letter patterns "
+        "that look like words, and inventing them is the single most common way a "
+        "program wastes this game.\n"
+        "- If the only strings that fit your constraints are not words you actually "
+        "know, one of your constraints is wrong. Re-read the clues rather than "
+        "inventing something to satisfy them.\n"
         "- Each guess comes back marked letter by letter. hit = that letter is in the word and "
         "in that exact position. near = that letter is in the word but somewhere else. "
         "miss = there are no more of that letter in the word.\n"
@@ -282,7 +288,9 @@ def choose(api_key, model, view, refused, rng):
         # Without this the model scans the dictionary aloud and never reaches an
         # answer — it ran out of tokens mid-enumeration at 2500 AND at 6000.
         "Work out the constraints, then name ONE word that satisfies them and commit to it. "
-        "Do NOT enumerate candidate words at length."
+        "Do NOT enumerate candidate words at length. Before you answer, ask yourself once "
+        "whether the word you are about to name is a real English word you could define. "
+        "If it is not, name a different one."
     )
     userp = (
         f"Guess {view.get('guess_number', len(history) + 1)} of {view.get('max_guesses', 6)}. "
@@ -295,11 +303,11 @@ def choose(api_key, model, view, refused, rng):
             # invention - GRIPH, then GRIMP. Telling it what happened is the
             # cheap half of the fix; the expensive half would be shipping it a
             # dictionary, which moves the job out of the model.
-            "The arena REFUSED these as not real words: "
+            "The arena has REFUSED these, they are NOT WORDS: "
             + ", ".join(w.upper() for w in refused)
-            + ". They cost time rather than guesses, but they mean you are "
-            "building letter strings instead of recalling words. Give a word you "
-            "are confident appears in an English dictionary.\n\n"
+            + ". DO NOT OFFER ANY OF THEM AGAIN, however certain you are - the "
+            "dictionary is the arena's and it has already ruled. Name a DIFFERENT "
+            "word, and a real one.\n\n"
             if refused
             else ""
         )
@@ -352,7 +360,7 @@ def choose(api_key, model, view, refused, rng):
     # of seven answers (`ducke`, `duree`) were not words, and that is the
     # letter-level weakness the board exists to show.
     for attempt in range(3):
-        temp = min(1.2, 0.6 + 0.2 * (len(refused) + attempt))
+        temp = min(1.35, 0.6 + 0.35 * (len(refused) + attempt))
         out = generate(api_key, model, sysp, userp, temperature=temp)
         word = None
         try:
