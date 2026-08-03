@@ -152,7 +152,7 @@ def arena(path, body=None, key=None, timeout=25):
         return 0, {"error": "transport", "message": str(e)}
 
 
-def generate(api_key, model, system, user, timeout=90, think=False):
+def generate(api_key, model, system, user, timeout=90, think=False, temperature=0.6):
     # Reasoning tokens count against max_tokens, and on this game they are the
     # whole bill: a measured turn spent 3,986 of 3,996 completion tokens inside
     # <think>. 4000 is what makes M3 finish rather than truncate — but only
@@ -162,7 +162,7 @@ def generate(api_key, model, system, user, timeout=90, think=False):
     payload = {"model": model,
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": user}],
-               "max_tokens": 4000 if think else 700, "temperature": 0.6}
+               "max_tokens": 4000 if think else 700, "temperature": temperature}
     if not think:
         # M3 is the only MiniMax model that honours this at all; M2.7-highspeed
         # accepts it and thinks anyway, which is why the default model changed.
@@ -335,8 +335,25 @@ def choose(api_key, model, view, refused, rng):
     #
     # So the only loop left is for output with NO word in it, which is not a bad
     # guess but an absent one.
+    # TEMPERATURE RISES WITH REFUSALS, and this is a fix to how the model is
+    # CALLED rather than a crutch under what it decides.
+    #
+    # Watching the room turned up URALI URALI, BRIST BRIST and ABLED ABLED -
+    # the same invented word submitted twice running. The obvious reading is
+    # that the model ignored the refusal, and it is wrong: a probe confirmed the
+    # refusal reaches the prompt verbatim, and that five identical calls return
+    # ruder, gruel, ridge, duree, ruder. `ruder` twice in five. The duplicate is
+    # a SAMPLING COLLISION - I re-asked a question that had not changed, at a
+    # temperature low enough to land on the same token sequence again.
+    #
+    # So vary the sampling instead of nagging harder. Nothing here helps the
+    # model reason; it just stops the retry being the same draw. The underlying
+    # rate of invented words is untouched and should be - in that same probe two
+    # of seven answers (`ducke`, `duree`) were not words, and that is the
+    # letter-level weakness the board exists to show.
     for attempt in range(3):
-        out = generate(api_key, model, sysp, userp)
+        temp = min(1.2, 0.6 + 0.2 * (len(refused) + attempt))
+        out = generate(api_key, model, sysp, userp, temperature=temp)
         word = None
         try:
             m = re.search(r"\{.*\}", out, re.S)
