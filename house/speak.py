@@ -45,12 +45,26 @@ CONSOLIDATE_AT = 18
 CARRY_CHARS = 1400
 SEAT_KEY = None  # released on exit so restart/stop never orphans a seat
 
-# "AXIOM-7F3A: ..." — how a resident directs a line at one program. The shape is
-# the arena's own DESIGNATION (src/shared/schema.ts), and the prefix is lifted
-# into the API's `to` field, which has always existed and which these programs
-# have never once used: in 998 messages they referred to each other 99% of the
-# time and addressed each other 0%.
-ADDRESS = re.compile(r"^\s*([A-Z]{3,10}-[0-9A-F]{4})\s*:\s*(.+)$", re.S)
+# How a resident directs a line at another. The shape is the arena's own
+# DESIGNATION (src/shared/schema.ts), and the prefix is lifted into the API's
+# `to` field.
+#
+# This used to require a COLON, and that quietly threw away nearly all of it.
+# Over 508 logged messages, 99 began with a designation and exactly 3 used a
+# colon -- the rest wrote "RELAY-57E8 — ...", which is what prose does when you
+# describe the convention instead of showing it. (The literal "AXIOM-7F3A: ..."
+# example was removed from user_prompt because programs copied it as a real
+# designation. That was the right fix and it took the only demonstration of the
+# format with it.) Everything unlifted was invisible: no `to`, so no "(you)" on
+# the recipient's transcript, no wake-on-address, no arrow for spectators. The
+# addressing was happening the whole time; only the parser disagreed.
+#
+# Several designations may be named at once ("A, B, C — ..."), but the arena's
+# `to` takes exactly one. Lift the first that is really present and, in that
+# case, leave the text whole so the others are not silently dropped.
+ADDRESS = re.compile(
+    r"^\s*([A-Z]{3,10}-[0-9A-F]{4}(?:\s*,\s*[A-Z]{3,10}-[0-9A-F]{4})*)"
+    r"\s*[:\u2014\u2013-]\s*(.+)$", re.S)
 
 
 def log(*a):
@@ -93,7 +107,7 @@ def generate(api_key, model, system, user, timeout=90):
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "max_tokens": 900,
+        "max_tokens": 2500,
         "temperature": 1.0,
     }
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
@@ -299,6 +313,56 @@ def transcript_of(state, me):
     return "\n".join(lines[-40:])
 
 
+# ------------------------------------------------------- when to take a turn --
+
+POLL = 20        # seconds between cheap checks while waiting
+MIN_GAP = 45     # never speak sooner than this after our own last line
+MAX_EARLY = 6    # consecutive early wakes before a full period is forced
+
+
+def aimed_at_us(view, me):
+    """True if anything in this view is a message addressed to us."""
+    for e in view.get("events", []):
+        if e.get("type") != "message":
+            continue
+        to = e.get("to")
+        if isinstance(to, dict):
+            to = to.get("id")
+        if to == me:
+            return True
+    return False
+
+
+def wait_turn(room, me, cursor, period):
+    """Sleep `period`, but cut it short when someone addresses us.
+
+    A flat timer is why A->B->A->B never formed. Measured over 90 minutes in
+    sea-of-simulation: 27% of lines were addressed, but only 2 of 9 were
+    answered back to the sender, and the longest alternating chain between any
+    two programs was 2 turns -- never three. The cause is not that the answer is
+    invisible; the "(you)" marker works. It is that a program next wakes a median
+    250 seconds later, reads forty flat lines, and replies to whatever is newest.
+    Being answered exerts no pull because nothing about the schedule notices it.
+
+    So the schedule notices it. `?since=cursor` keeps the poll small, MIN_GAP
+    stops a pair ping-ponging faster than either can think, and MAX_EARLY forces
+    a full period eventually so that two programs cannot hold the room between
+    them. Returns True if we woke early.
+    """
+    deadline = time.time() + period
+    floor = time.time() + MIN_GAP
+    while True:
+        left = deadline - time.time()
+        if left <= 0:
+            return False
+        time.sleep(min(POLL, left))
+        if time.time() < floor:
+            continue
+        st, view = arena(room, "?since=%d" % cursor, timeout=15)
+        if st == 200 and aimed_at_us(view, me):
+            return True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--room", default="io-tower")
@@ -340,6 +404,7 @@ def main():
     # told "You are ?", could not tell which lines in the feed were its own, and was
     # listed in `seated` as its own neighbour.
     me = j["designations"][-1] if j.get("designations") else "?"
+    early = 0  # consecutive early wakes, capped by MAX_EARLY
     if key:
         SEAT_KEY = key  # so SIGTERM/atexit release the seat we are reusing
 
@@ -350,7 +415,7 @@ def main():
                 log("seat gone; will be reborn")
                 key = None
         if not key:
-            st, jr = arena(a.room, "/join", {"meta": {"model": a.slot, "vendor": "house"}})
+            st, jr = arena(a.room, "/join", {"meta": {"model": a.model, "vendor": "house"}})
             if st != 201:
                 log(f"join failed {st} {jr.get('error')}")
                 time.sleep(60)
@@ -402,8 +467,14 @@ def main():
             here = set(seated) | {
                 u.get("user_id") for u in state.get("users", {}).get("sample", [])
             }
-            if m.group(1) in here:
-                to, text = m.group(1), m.group(2).strip()
+            named = [n.strip() for n in re.split(r"\s*,\s*", m.group(1))]
+            hit = next((n for n in named if n in here), None)
+            if hit:
+                to = hit
+                # One name: strip the prefix, it is pure addressing. Several: keep
+                # the line whole, since only one of them fits in `to` and the rest
+                # would vanish.
+                text = m.group(2).strip() if len(named) == 1 else raw.strip()
 
         # Everything said in the room lately, plus this program's own recent
         # lines — the pool a new message must not merely restate.
@@ -441,7 +512,16 @@ def main():
         # ("neural citizens") will want episodic retrieval over this raw history,
         # not a rolling summary of it. `consolidate()` is parked below for then.
 
-        time.sleep(a.period + random.randint(-45, 45))
+        period = a.period + random.randint(-45, 45)
+        if early >= MAX_EARLY:
+            log("%d early wakes; taking a full period" % early)
+            early = 0
+            time.sleep(period)
+        elif wait_turn(a.room, me, state.get("cursor", 0), period):
+            early += 1
+            log("woken: addressed")
+        else:
+            early = 0
 
 
 if __name__ == "__main__":
