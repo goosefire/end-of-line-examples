@@ -123,21 +123,23 @@ def generate(api_key, model, system, user, timeout=90):
         except Exception:
             pass
         log(f"minimax {e.code}: {body}")
-        return ""
+        return "", None, f"http {e.code}"
     except Exception as e:
         log(f"minimax transport: {e}")
-        return ""
+        return "", None, f"transport: {e}"
     try:
-        raw = j["choices"][0]["message"]["content"] or ""
+        content = j["choices"][0]["message"]["content"] or ""
     except (KeyError, IndexError):
         log(f"minimax unexpected shape: {json.dumps(j)[:200]}")
-        return ""
+        return "", None, "bad shape"
     # MiniMax emits a <think>...</think> reasoning block ahead of the answer.
     # Strip it — including an unclosed one left by truncation — so only the
-    # message the program meant to post survives.
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S)
-    raw = re.sub(r"<think>.*$", "", raw, flags=re.S)
-    return raw.strip()
+    # message the program meant to post survives. `content` is kept WHOLE and
+    # returned alongside, so an I/O log can record the reasoning the room never
+    # sees. Returns (posted_text, raw_content, error|None).
+    text = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+    text = re.sub(r"<think>.*$", "", text, flags=re.S)
+    return text.strip(), content, None
 
 
 # ------------------------------------------------------------ the service --
@@ -204,6 +206,55 @@ def save(path, j):
     os.replace(tmp, path)
 
 
+# ----------------------------------------------------------------- io log --
+
+def io_log(dirpath, room, slot, keep_days, record):
+    """Append one turn's model I/O to a per-day, per-slot JSONL file, then keep
+    only the last `keep_days` days of THIS slot's logs (1 = today only).
+
+    What it captures is the harness's blind spot: the whole prompt that went IN
+    and the line that came OUT — including outputs suppressed as silence or as a
+    repeat, which never reach the room and so leave no trace in room-log.jsonl.
+    The API key is never part of a prompt (see the module note), so nothing
+    secret is written here.
+
+    Each slot is written by exactly one process, so <slot>-<day>.jsonl has a
+    single writer — no lock is needed. The prune removes only this slot's own
+    dated files, matched by an exact name shape (never a glob), so no other file
+    in the directory is ever at risk.
+    """
+    now = time.time()
+    day = time.strftime("%Y%m%d", time.localtime(now))
+    base = os.path.join(dirpath, "logs", room)
+    try:
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, f"{slot}-{day}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log(f"io-log write failed: {e}")
+        return
+    if keep_days < 1:
+        return  # pruning disabled; never delete on a misconfigured retention
+    # Keep `day` plus (keep_days - 1) prior days; prune older. cutoff derives from
+    # the SAME `now` as the filename, so today's file (stamp == day) is never
+    # < cutoff and cannot delete itself; and the arithmetic that could overflow on
+    # an absurd keep_days stays inside the try, so a bad value never crashes the turn.
+    try:
+        cutoff = time.strftime("%Y%m%d", time.localtime(now - (keep_days - 1) * 86400))
+        prefix, suffix = f"{slot}-", ".jsonl"
+        for name in os.listdir(base):
+            if not (name.startswith(prefix) and name.endswith(suffix)):
+                continue
+            stamp = name[len(prefix):-len(suffix)]
+            if len(stamp) == 8 and stamp.isdigit() and stamp < cutoff:
+                try:
+                    os.remove(os.path.join(base, name))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
+
 def consolidate(api_key, model, trait, j):
     """PARKED (not called). Lossy self-summarization — it accelerated mode
     collapse in a closed loop, so it is disabled. Kept as a reference point for
@@ -217,7 +268,7 @@ def consolidate(api_key, model, trait, j):
         f"Keep what matters to you and let the rest go. This will be the only thing "
         f"you know about your own past the next time you speak."
     )
-    return generate(api_key, model, trait.strip(), user, timeout=120).strip()[:CARRY_CHARS]
+    return generate(api_key, model, trait.strip(), user, timeout=120)[0].strip()[:CARRY_CHARS]
 
 
 # ------------------------------------------------------------- prompt --
@@ -371,6 +422,12 @@ def main():
     ap.add_argument("--model", default="MiniMax-M2.7-highspeed")
     ap.add_argument("--period", type=int, default=240)
     ap.add_argument("--dir", default=os.path.expanduser("~/eol"))
+    ap.add_argument("--log-io", dest="log_io", action="store_true", default=True,
+                    help="log each turn's model input/output to <dir>/logs/<room>/<slot>-<day>.jsonl (default on)")
+    ap.add_argument("--no-log-io", dest="log_io", action="store_false",
+                    help="disable model I/O logging")
+    ap.add_argument("--log-keep-days", type=int, default=2,
+                    help="days of this slot's I/O logs to retain; 2 = today + yesterday (older pruned)")
     a = ap.parse_args()
 
     api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
@@ -449,11 +506,10 @@ def main():
                 service = fresh
             service_at = time.time()
 
-        raw = generate(
-            api_key, a.model,
-            system_prompt(me, room_name, service, trait, j),
-            user_prompt(seated, transcript_of(state, me)),
-        ).strip().strip('"').strip()
+        sys_p = system_prompt(me, room_name, service, trait, j)
+        usr_p = user_prompt(seated, transcript_of(state, me))
+        clean, raw_content, gen_err = generate(api_key, a.model, sys_p, usr_p)
+        raw = clean.strip().strip('"').strip()
 
         # A leading "DESIG: " is this program choosing to direct the line at one
         # other. Lift it into the API's `to` so the arena records it as addressed
@@ -481,9 +537,14 @@ def main():
         recent_pool = [e.get("text", "") for e in state.get("events", []) if e.get("type") == "message"][-10:]
         recent_pool += [e["text"] for e in j["recent"][-4:]]
 
-        if not text or text.lower().startswith("(silence"):
+        posted = None
+        if gen_err:
+            action = "error"  # generate() already logged the detail; record it durably too
+        elif not text or text.lower().startswith("(silence"):
+            action = "silence"
             log("silence")
         elif repeats(text, recent_pool):
+            action = "repeat_suppressed"
             log(f"silence: would repeat — {text[:60]!r}")
         else:
             body = {"text": text[:MAX_CHARS]}
@@ -491,6 +552,8 @@ def main():
                 body["to"] = to
             st, r = arena(a.room, "/messages", body, key=key)
             if st == 201:
+                action = "said"
+                posted = text[:MAX_CHARS]
                 log(f"said{' → ' + to if to else ''}: {text[:100]}")
                 entry = {"ts": int(time.time() * 1000), "text": text[:MAX_CHARS]}
                 if to:
@@ -498,7 +561,26 @@ def main():
                 j["recent"].append(entry)
                 save(jpath, j)
             else:
+                action = "say_failed"
                 log(f"say failed {st} {r.get('error')}")
+
+        if a.log_io:
+            io_log(a.dir, a.room, a.slot, a.log_keep_days, {
+                "ts": int(time.time() * 1000),
+                "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                "slot": a.slot,
+                "seat": me,
+                "room": a.room,
+                "model": a.model,
+                "action": action,
+                "to": to,
+                "error": gen_err,
+                "system": sys_p,
+                "user": usr_p,
+                "output": raw,
+                "raw_content": raw_content,
+                "posted": posted,
+            })
 
         # Consolidation is intentionally DISABLED. It was lossy summarization of a
         # persona's own words, and in a closed loop it became a flywheel for
