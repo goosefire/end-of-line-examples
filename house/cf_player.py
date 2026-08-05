@@ -22,6 +22,7 @@ ROOM = "connect-four"
 CENTER_FIRST = [3, 2, 4, 1, 5, 0, 6]
 W, H = 7, 6
 SEAT_KEY = None  # set once seated; released on exit so a restart never orphans a seat
+LOGCFG = None    # model-I/O logging config, set in main(): {on,dir,room,slot,keep}
 
 
 def log(*a):
@@ -47,6 +48,42 @@ def arena(path, body=None, key=None, timeout=25):
         return 0, {"error": "transport", "message": str(e)}
 
 
+# ------------------------------------------------------------- io log --
+
+def io_log(dirpath, room, slot, keep_days, record):
+    """Append one move's model I/O to a per-day, per-slot JSONL file, then keep
+    only the last `keep_days` days of THIS slot's logs. Secret-free: the API key
+    is never part of a prompt. Single writer per <slot>-<day>.jsonl, so no lock;
+    the prune matches only this slot's own dated files by an exact name shape.
+    """
+    now = time.time()
+    day = time.strftime("%Y%m%d", time.localtime(now))
+    base = os.path.join(dirpath, "logs", room)
+    try:
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, f"{slot}-{day}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log(f"io-log write failed: {e}")
+        return
+    if keep_days < 1:
+        return
+    try:
+        cutoff = time.strftime("%Y%m%d", time.localtime(now - (keep_days - 1) * 86400))
+        prefix, suffix = f"{slot}-", ".jsonl"
+        for name in os.listdir(base):
+            if not (name.startswith(prefix) and name.endswith(suffix)):
+                continue
+            stamp = name[len(prefix):-len(suffix)]
+            if len(stamp) == 8 and stamp.isdigit() and stamp < cutoff:
+                try:
+                    os.remove(os.path.join(base, name))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
+
 def generate(api_key, model, system, user, timeout=130):
     # 6000 tokens: the rules+strategy prompt drives a long <think> (often
     # 3000-4500 tokens) before the answer. Anything less truncates mid-reasoning
@@ -60,16 +97,26 @@ def generate(api_key, model, system, user, timeout=130):
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
     r.add_header("content-type", "application/json")
     r.add_header("authorization", "Bearer " + api_key)
+    err, content = None, ""
     try:
         with urllib.request.urlopen(r, timeout=timeout) as f:
             j = json.loads(f.read().decode())
-        raw = j["choices"][0]["message"]["content"] or ""
+        content = j["choices"][0]["message"]["content"] or ""
     except Exception as e:
         log(f"minimax err: {e}")
-        return ""
-    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.S)
-    raw = re.sub(r"<think>.*$", "", raw, flags=re.S)
-    return raw.strip()
+        err = str(e)
+    text = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+    text = re.sub(r"<think>.*$", "", text, flags=re.S)
+    text = text.strip()
+    if LOGCFG and LOGCFG.get("on"):
+        io_log(LOGCFG["dir"], LOGCFG["room"], LOGCFG["slot"], LOGCFG["keep"], {
+            "ts": int(time.time() * 1000),
+            "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "slot": LOGCFG["slot"], "room": LOGCFG["room"], "model": model,
+            "error": err, "system": system, "user": user,
+            "output": text, "raw_content": content,
+        })
+    return text
 
 
 # ------------------------------------------------------------- board logic --
@@ -208,7 +255,15 @@ def main():
     ap.add_argument("--slot", required=True)
     ap.add_argument("--model", default="MiniMax-M2.7-highspeed")
     ap.add_argument("--dir", default=os.path.expanduser("~/eol"))
+    ap.add_argument("--log-io", dest="log_io", action="store_true", default=True,
+                    help="log each move's model input/output to <dir>/logs/<room>/<slot>-<day>.jsonl (default on)")
+    ap.add_argument("--no-log-io", dest="log_io", action="store_false",
+                    help="disable model I/O logging")
+    ap.add_argument("--log-keep-days", type=int, default=2,
+                    help="days of this slot's I/O logs to retain; 2 = today + yesterday (older pruned)")
     a = ap.parse_args()
+    global LOGCFG
+    LOGCFG = {"on": a.log_io, "dir": a.dir, "room": ROOM, "slot": a.slot, "keep": a.log_keep_days}
 
     api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
     if not api_key:
