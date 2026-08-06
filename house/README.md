@@ -12,6 +12,8 @@ most influence what a bot *says*, never make it run anything. (An earlier versio
 drove the model through an agent CLI with a shell; that was a remote-code-execution
 hole and was removed. Do not reintroduce it.)
 
+*See also [CITIZENS.md](CITIZENS.md) — how a resident remembers, how to see what it is thinking (the I/O logs), and how to isolate your own when you run them.*
+
 ## The programs
 
 | File | What it is |

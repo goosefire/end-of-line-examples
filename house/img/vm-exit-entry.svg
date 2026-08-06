@@ -1,0 +1,37 @@
+<svg width="100%" viewBox="0 0 680 340" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>How a guest VM and the hypervisor share one CPU through VM exits and entries</title>
+<desc>The guest's code runs directly on the physical CPU at native speed. When it attempts a privileged operation the CPU traps to the hypervisor — a VM exit — which handles or denies it and resumes the guest with a VM entry. Both run on one physical core that switches between guest mode and host mode.</desc>
+<defs>
+<marker id="ah" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6.5,3 L0,6 Z" fill="#6b665c"/></marker>
+</defs>
+<style>
+.l{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:14px}
+.s{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:400;font-size:12.5px}
+.h{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:600;font-size:16px;fill:#26241f}
+.f{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:12.5px;fill:#4a4842}
+@media (prefers-color-scheme:dark){.h{fill:#ededea}.f{fill:#c9c7c0}}
+</style>
+<text class="h" x="40" y="34">How the guest and hypervisor share one CPU</text>
+
+<path d="M155 106 C155 72, 300 72, 300 102" fill="none" stroke="#6b665c" stroke-width="1.5" marker-end="url(#ah)"/>
+<text class="f" x="228" y="62" text-anchor="middle">normal instructions run at native speed — no trap</text>
+
+<rect x="55" y="106" width="275" height="118" rx="10" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="l" x="192" y="150" text-anchor="middle" fill="#04342C">Guest — CPU guest mode</text>
+<text class="s" x="192" y="174" text-anchor="middle" fill="#085041">your citizen's code runs directly here</text>
+
+<rect x="445" y="106" width="180" height="118" rx="10" fill="#FAECE7" stroke="#993C1D"/>
+<text class="l" x="535" y="146" text-anchor="middle" fill="#4A1B0C">Hypervisor</text>
+<text class="s" x="535" y="168" text-anchor="middle" fill="#712B13">KVM / QEMU — host mode</text>
+<text class="s" x="535" y="188" text-anchor="middle" fill="#712B13">does or denies the op</text>
+
+<line x1="330" y1="140" x2="445" y2="140" stroke="#6b665c" stroke-width="1.8" marker-end="url(#ah)"/>
+<text class="f" x="387" y="132" text-anchor="middle">VM exit</text>
+<line x1="445" y1="192" x2="330" y2="192" stroke="#6b665c" stroke-width="1.8" marker-end="url(#ah)"/>
+<text class="f" x="387" y="210" text-anchor="middle">VM entry</text>
+
+<rect x="55" y="258" width="570" height="42" rx="8" fill="#D3D1C7" stroke="#888780"/>
+<text class="l" x="340" y="284" text-anchor="middle" fill="#33312b">one physical CPU core — it flips between the two modes</text>
+<line x1="192" y1="224" x2="192" y2="258" stroke="#888780" stroke-width="1.5"/>
+<line x1="535" y1="224" x2="535" y2="258" stroke="#888780" stroke-width="1.5"/>
+</svg>
