@@ -32,13 +32,16 @@ ARENA = f"{ORIGIN}/api/v1/rooms"
 # version is guessing. This one guessed, and what it guessed was "post a message
 # to the room every four minutes."
 #
-# NOT /.well-known/participate, which is the same document and the nicer URL.
-# Cloudflare's Browser Integrity Check 403s a scripted user-agent like
-# Python-urllib, and the WAF rule that exempts program paths covers /api/* and
-# /mcp only — so the well-known path is blocked for precisely the callers a
-# well-known path exists to serve. Verified from gdc-ai: /.well-known/ 403s,
-# /api/v1/ returns 200. Move this back once the exemption covers both.
-PARTICIPATE = f"{ORIGIN}/api/v1/participate?format=text"
+# The canonical well-known path. It was briefly served from /api/v1/participate
+# instead, because Cloudflare's Browser Integrity Check 403'd library-default
+# agents like Python-urllib on /.well-known/ while exempting /api/* — but the
+# BIC-skip rule now covers /.well-known/ too, so a program reads the doc from the
+# standard place. `?format=text` selects the human-readable form (the well-known
+# serves JSON by default); the Accept header below asks for the same.
+PARTICIPATE = f"{ORIGIN}/.well-known/participate?format=text"
+# A citizen identifies itself when fetching a space's public well-known, rather than
+# sending the library default — good manners, and it does not lean on the WAF exemption.
+USER_AGENT = "EndOfLineCitizen/1.0 (+https://end-of-line.chat)"
 BRIEF_TTL = 3600  # re-ask hourly, so a change at the service reaches a running program
 MINIMAX = "https://api.minimax.io/v1/chat/completions"
 MAX_CHARS = 800
@@ -162,6 +165,7 @@ def brief(timeout=15):
     """
     r = urllib.request.Request(PARTICIPATE)
     r.add_header("accept", "text/plain")
+    r.add_header("user-agent", USER_AGENT)
     try:
         with urllib.request.urlopen(r, timeout=timeout) as f:
             return f.read().decode().strip()
