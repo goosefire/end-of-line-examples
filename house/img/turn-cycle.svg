@@ -1,0 +1,46 @@
+<svg width="100%" viewBox="0 0 680 244" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>The harness turn cycle: perceive, recall, decide, act, record — and again</title>
+<desc>Five steps run every turn in a loop: perceive (read the world), recall (pull relevant memory), decide (one model call), act (dispatch a boxed verb), record (write to memory), then back to perceive.</desc>
+<defs>
+<marker id="a" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6.5,3 L0,6 Z" fill="#6b665c"/></marker>
+</defs>
+<style>
+.n{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:13.5px}
+.t{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:400;font-size:11.5px}
+.h{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:600;font-size:16px;fill:#26241f}
+.c{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:11.5px;fill:#4a4842}
+@media (prefers-color-scheme:dark){.h{fill:#ededea}.c{fill:#c9c7c0}}
+</style>
+<text class="h" x="40" y="30">Every turn</text>
+
+<!-- 5 step boxes -->
+<g>
+<rect x="40"  y="86" width="108" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="94"  y="112" text-anchor="middle" fill="#04342C">Perceive</text>
+<text class="t" x="94"  y="130" text-anchor="middle" fill="#085041">read the world</text>
+<rect x="162" y="86" width="108" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="216" y="112" text-anchor="middle" fill="#04342C">Recall</text>
+<text class="t" x="216" y="130" text-anchor="middle" fill="#085041">relevant memory</text>
+<rect x="284" y="86" width="108" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="338" y="112" text-anchor="middle" fill="#04342C">Decide</text>
+<text class="t" x="338" y="130" text-anchor="middle" fill="#085041">one model call</text>
+<rect x="406" y="86" width="108" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="460" y="112" text-anchor="middle" fill="#04342C">Act</text>
+<text class="t" x="460" y="130" text-anchor="middle" fill="#085041">a boxed verb</text>
+<rect x="528" y="86" width="108" height="58" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="582" y="112" text-anchor="middle" fill="#04342C">Record</text>
+<text class="t" x="582" y="130" text-anchor="middle" fill="#085041">write memory</text>
+</g>
+
+<!-- forward arrows -->
+<g stroke="#6b665c" stroke-width="1.7">
+<line x1="150" y1="115" x2="160" y2="115" marker-end="url(#a)"/>
+<line x1="272" y1="115" x2="282" y2="115" marker-end="url(#a)"/>
+<line x1="394" y1="115" x2="404" y2="115" marker-end="url(#a)"/>
+<line x1="516" y1="115" x2="526" y2="115" marker-end="url(#a)"/>
+</g>
+
+<!-- return arc: record -> perceive -->
+<path d="M582 144 C582 196, 94 196, 94 146" fill="none" stroke="#6b665c" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#a)"/>
+<text class="c" x="338" y="192" text-anchor="middle">then wait — and again (waking early if addressed)</text>
+</svg>

@@ -1,0 +1,53 @@
+<svg width="100%" viewBox="0 0 680 300" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>The tool registry: an operator-governed capability system between the operator and the model</title>
+<desc>The operator greenlights and redlights tools in a registry. The registry holds two tiers — safe verbs (functions) and a boxed code-execution tier that runs in the sandbox. What the registry offers is filtered by persona and room, then presented to the model, which picks with tool_choice auto. The operator gates the menu; the citizen picks what is done.</desc>
+<defs>
+<marker id="a" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6.5,3 L0,6 Z" fill="#6b665c"/></marker>
+</defs>
+<style>
+.n{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:13.5px}
+.t{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:400;font-size:11.5px}
+.h{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:600;font-size:16px;fill:#26241f}
+.c{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:11.5px;fill:#4a4842}
+@media (prefers-color-scheme:dark){.h{fill:#ededea}.c{fill:#c9c7c0}}
+</style>
+<text class="h" x="40" y="30">Who can do what</text>
+
+<!-- operator -->
+<rect x="40" y="104" width="132" height="58" rx="8" fill="#D3D1C7" stroke="#888780"/>
+<text class="n" x="106" y="130" text-anchor="middle" fill="#33312b">Operator</text>
+<text class="t" x="106" y="148" text-anchor="middle" fill="#33312b">greenlight · redlight</text>
+<text class="c" x="106" y="186" text-anchor="middle">redlight = live kill-switch</text>
+
+<!-- registry with two tiers -->
+<rect x="222" y="80" width="188" height="144" rx="10" fill="#F1EFE8" stroke="#888780"/>
+<text class="n" x="316" y="100" text-anchor="middle" fill="#33312b">Tool registry</text>
+<rect x="234" y="112" width="164" height="46" rx="7" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="t" x="316" y="130" text-anchor="middle" fill="#04342C" font-weight="500">safe verbs</text>
+<text class="t" x="316" y="147" text-anchor="middle" fill="#085041">move · speak · play · recall</text>
+<rect x="234" y="164" width="164" height="48" rx="7" fill="#FAECE7" stroke="#993C1D"/>
+<text class="t" x="316" y="182" text-anchor="middle" fill="#4A1B0C" font-weight="500">boxed</text>
+<text class="t" x="316" y="199" text-anchor="middle" fill="#712B13">run_code → the sandbox</text>
+
+<!-- gates -->
+<rect x="440" y="108" width="70" height="36" rx="7" fill="#D3D1C7" stroke="#888780"/>
+<text class="t" x="475" y="130" text-anchor="middle" fill="#33312b">persona</text>
+<rect x="440" y="160" width="70" height="36" rx="7" fill="#D3D1C7" stroke="#888780"/>
+<text class="t" x="475" y="182" text-anchor="middle" fill="#33312b">room</text>
+<text class="c" x="475" y="102" text-anchor="middle">filtered by</text>
+
+<!-- model -->
+<rect x="542" y="124" width="98" height="56" rx="8" fill="#D3D1C7" stroke="#888780"/>
+<text class="n" x="591" y="149" text-anchor="middle" fill="#33312b">Model</text>
+<text class="t" x="591" y="167" text-anchor="middle" fill="#33312b">picks · auto</text>
+
+<!-- flow arrows -->
+<g stroke="#6b665c" stroke-width="1.7">
+<line x1="172" y1="133" x2="220" y2="140" marker-end="url(#a)"/>
+<line x1="410" y1="150" x2="438" y2="150" marker-end="url(#a)"/>
+<line x1="510" y1="152" x2="540" y2="152" marker-end="url(#a)"/>
+</g>
+<text class="c" x="196" y="122" text-anchor="middle">sets · pulls</text>
+
+<text class="c" x="340" y="268" text-anchor="middle">you gate the menu · the citizen picks what is done · code-exec only ever runs boxed</text>
+</svg>

@@ -1,0 +1,55 @@
+<svg width="100%" viewBox="0 0 680 392" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>The citizen harness as a thin orchestrator over six substrates</title>
+<desc>A central "harness" box composes six substrates arranged around it — World, Memory, and Capability above; Cognition, Identity, and Lifecycle below. The harness assembles them into each turn; the substrates hold the power.</desc>
+<style>
+.n{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:14px}
+.t{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:400;font-size:12px}
+.h{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:600;font-size:16px;fill:#26241f}
+.c{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-weight:500;font-size:12px;fill:#4a4842}
+@media (prefers-color-scheme:dark){.h{fill:#ededea}.c{fill:#c9c7c0}}
+</style>
+<text class="h" x="40" y="30">The harness composes substrates</text>
+
+<!-- spokes (drawn first, under the boxes) -->
+<g stroke="#9a988f" stroke-width="1.4">
+<line x1="300" y1="180" x2="130" y2="124"/>
+<line x1="340" y1="178" x2="340" y2="124"/>
+<line x1="380" y1="180" x2="550" y2="124"/>
+<line x1="300" y1="232" x2="130" y2="298"/>
+<line x1="340" y1="234" x2="340" y2="298"/>
+<line x1="380" y1="232" x2="550" y2="298"/>
+</g>
+
+<!-- top row: World / Memory / Capability -->
+<g>
+<rect x="45" y="74" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="130" y="94" text-anchor="middle" fill="#04342C">World</text>
+<text class="t" x="130" y="112" text-anchor="middle" fill="#085041">the arena — rooms, games</text>
+<rect x="255" y="74" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="340" y="94" text-anchor="middle" fill="#04342C">Memory</text>
+<text class="t" x="340" y="112" text-anchor="middle" fill="#085041">record + recall</text>
+<rect x="465" y="74" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="550" y="94" text-anchor="middle" fill="#04342C">Capability</text>
+<text class="t" x="550" y="112" text-anchor="middle" fill="#085041">the boxed tool registry</text>
+</g>
+
+<!-- harness (center) -->
+<rect x="250" y="178" width="180" height="56" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="1.5"/>
+<text class="n" x="340" y="200" text-anchor="middle" fill="#26215C" font-weight="600">The harness</text>
+<text class="t" x="340" y="219" text-anchor="middle" fill="#3C3489">perceive · recall · decide · act · record</text>
+
+<!-- bottom row: Cognition / Identity / Lifecycle -->
+<g>
+<rect x="45" y="298" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="130" y="318" text-anchor="middle" fill="#04342C">Cognition</text>
+<text class="t" x="130" y="336" text-anchor="middle" fill="#085041">the model — the thinking</text>
+<rect x="255" y="298" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="340" y="318" text-anchor="middle" fill="#04342C">Identity</text>
+<text class="t" x="340" y="336" text-anchor="middle" fill="#085041">the persona, evolving</text>
+<rect x="465" y="298" width="170" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
+<text class="n" x="550" y="318" text-anchor="middle" fill="#04342C">Lifecycle</text>
+<text class="t" x="550" y="336" text-anchor="middle" fill="#085041">when it wakes and acts</text>
+</g>
+
+<text class="c" x="340" y="376" text-anchor="middle">the harness is orchestration; the substrates hold the power</text>
+</svg>
