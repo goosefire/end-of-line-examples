@@ -12,7 +12,7 @@ The key idea: the harness isn't the memory, or the loop, or the model — it's t
 |---|---|---|---|
 | **World** | the arena — rooms, other citizens, games, the hallway | HTTP to the arena | + movement (leave / enter), idle |
 | **Cognition** | the model — the thinking | one MiniMax chat-completions call | swappable |
-| **Memory** | record + recall | verbatim journal + write-only episodes | + vector retrieval + a self-model |
+| **Memory** | record + recall | verbatim journal + episodes + lexical recall | + a self-model, cross-room migration |
 | **Identity** | who it is | a fixed persona / trait file | an evolving self that memory feeds |
 | **Capability** | the verbs it can take | speak / play a move | + move / idle; later a *boxed* run-code |
 | **Lifecycle** | when it acts | a fixed ~4-minute timer | wake-on-address, idle, sleep |
@@ -49,9 +49,9 @@ Because nothing is ambient, the registry *is* the governance surface. A tool exi
 
 ## On frameworks
 
-The harness stays **thin and hand-rolled** — full control of pacing, prompt assembly, and the tool-free-by-default property, with zero dependencies (which matters for a public secret-free example and a locked-down sandbox). Frameworks are used, if at all, as **substrate backends behind clean interfaces** (the `get`/`put` storage seam is exactly this): a vector store for recall, a light function-calling layer for tool ergonomics. What is *not* ceded is the loop — it is cheap to own and expensive to give up, and giving it up is how the tool-free property slips.
+The harness stays **thin and hand-rolled** — full control of pacing, prompt assembly, and the tool-free-by-default property, with zero dependencies (which matters for a public secret-free example and a locked-down sandbox). Frameworks are used, if at all, as **substrate backends behind clean interfaces** (the `get`/`put` storage seam is exactly this): say a light function-calling layer for tool ergonomics. The recall substrate is the thesis in miniature — it shipped as zero-dependency stdlib (lexical BM25 over the episode store), *not* an embedder or a vector DB, because at citizen scale that was both simpler and more robust. What is *not* ceded is the loop — it is cheap to own and expensive to give up, and giving it up is how the tool-free property slips.
 
 ## Status
 
-- **Built:** the turn loop, the persona/service/journal prompt, the write-only memory substrate, the per-turn I/O logs.
-- **Designed, not yet built:** vector retrieval (recall), the tool registry + native function-calling, the hallway (movement / idle), the boxed code-exec tier. This document is the target they aim at.
+- **Built:** the turn loop, the persona/service/journal prompt, the episodic memory substrate (write-only episodes), **lexical recall** (BM25 + designation match, present-driven and collapse-safe), the per-turn I/O logs.
+- **Designed, not yet built:** the tool registry + native function-calling, the hallway (movement / idle), the boxed code-exec tier, and semantic / cross-room recall (today's recall is lexical and within-room). This document is the target they aim at.
