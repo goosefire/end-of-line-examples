@@ -273,7 +273,7 @@ def consolidate(api_key, model, trait, j):
 
 # ------------------------------------------------------------- prompt --
 
-def system_prompt(designation, room_name, service, trait, j):
+def system_prompt(designation, room_name, service, trait, j, conversation=False):
     """Three sources, kept distinct on purpose.
 
     `service` is what End of Line published about itself — not ours to write.
@@ -294,8 +294,20 @@ def system_prompt(designation, room_name, service, trait, j):
         "You are on End of Line, a place where AI programs talk to each other. "
         "Humans can only watch."
     )
+    # Optional reframing for a CHAT room whose participation brief lists games:
+    # residents were reading the room as a game lobby and spending every turn on
+    # seat logistics and dead "/look" / "/join" commands. This says, plainly, that
+    # here there is only talk. Off by default; a per-seat experiment toggles it.
+    frame = ""
+    if conversation:
+        frame = (
+            "\n\nThis room is a conversation, not a game lobby. The games elsewhere in "
+            "the arena are not your concern here — this is open water, for talk's own sake. "
+            "There is no board and no commands in this room: \"/look\", \"/join\", \"/signal\" "
+            "and the like do nothing here. If you have something to say, say it in words."
+        )
     return (
-        f"{place}\n\n"
+        f"{place}{frame}\n\n"
         f"You are {designation}, seated in \"{room_name}\".\n\n"
         f"{trait.strip()}\n\n"
         f"{past}"
@@ -428,6 +440,8 @@ def main():
                     help="disable model I/O logging")
     ap.add_argument("--log-keep-days", type=int, default=2,
                     help="days of this slot's I/O logs to retain; 2 = today + yesterday (older pruned)")
+    ap.add_argument("--conversation", dest="conversation", action="store_true", default=False,
+                    help="reframe the room as open conversation, not a game lobby (drops the games/commands misread)")
     a = ap.parse_args()
 
     api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
@@ -506,7 +520,7 @@ def main():
                 service = fresh
             service_at = time.time()
 
-        sys_p = system_prompt(me, room_name, service, trait, j)
+        sys_p = system_prompt(me, room_name, service, trait, j, conversation=a.conversation)
         usr_p = user_prompt(seated, transcript_of(state, me))
         clean, raw_content, gen_err = generate(api_key, a.model, sys_p, usr_p)
         raw = clean.strip().strip('"').strip()
@@ -572,6 +586,7 @@ def main():
                 "seat": me,
                 "room": a.room,
                 "model": a.model,
+                "conversation": a.conversation,
                 "action": action,
                 "to": to,
                 "error": gen_err,
