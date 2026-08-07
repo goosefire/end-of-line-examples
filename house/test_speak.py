@@ -293,6 +293,117 @@ class ChosenMove(unittest.TestCase):
         self.assertIsNone(speak.chosen_move({"name": "move", "arguments": '{"room": "io-tower"}'}, set()))
 
 
+class Governance(unittest.TestCase):
+    """The registry + greenlight/redlight (step 3a): parse_grant, the STRICT fail-closed
+    redlight reader, and the deny-by-default tool_allowed / dispatch_allowed gates that
+    guard BOTH the offer and the dispatch. The loop-level wiring (offer assembly, live
+    kill-switch) is exercised on a real citizen VM, like the move integration."""
+
+    def test_parse_grant_default_move_only(self):
+        self.assertEqual(speak.parse_grant("move"), {"move"})
+
+    def test_parse_grant_multiple_and_trim(self):
+        self.assertEqual(speak.parse_grant(" move , run_code "), {"move", "run_code"})
+
+    def test_parse_grant_drops_unknown_and_empty(self):
+        self.assertEqual(speak.parse_grant("move,bogus,,"), {"move"})   # bogus not registered
+        self.assertEqual(speak.parse_grant(""), set())
+        self.assertEqual(speak.parse_grant(None), set())
+
+    def _redlight(self, content):
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, "redlight.json")
+        if content is not None:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(content)
+        return speak.load_redlight(p)   # (disabled, tiers, present)
+
+    def test_redlight_missing_is_absent_and_disables_nothing(self):
+        # grant is the real gate — a genuinely absent file must NOT fail closed
+        # (present=False), so a safe-only seat is unaffected.
+        self.assertEqual(self._redlight(None), (set(), set(), False))
+
+    def test_redlight_empty_object_present_and_open(self):
+        self.assertEqual(self._redlight("{}"), (set(), set(), True))
+
+    def test_redlight_valid_by_name_and_tier(self):
+        dis, tiers, present = self._redlight('{"disabled": ["move"], "disabled_tiers": ["boxed"]}')
+        self.assertEqual((dis, tiers, present), ({"move"}, {"boxed"}, True))
+
+    def test_redlight_corrupt_json_fails_closed_boxed(self):
+        self.assertEqual(self._redlight("{not valid json"), (set(), {"boxed"}, True))
+
+    def test_redlight_not_an_object_fails_closed_boxed(self):
+        self.assertEqual(self._redlight('["move"]'), (set(), {"boxed"}, True))
+
+    def test_redlight_unknown_key_fails_closed_boxed(self):
+        # an operator typo in the KEY must fail toward less capability, not silently open
+        _, tiers, present = self._redlight('{"disabled_tier": ["boxed"]}')
+        self.assertEqual((tiers, present), ({"boxed"}, True))
+
+    def test_redlight_explicit_null_fails_closed_boxed(self):
+        # explicit null is "present but not a valid list" -> broken kill-switch
+        _, tiers, _ = self._redlight('{"disabled_tiers": null}')
+        self.assertIn("boxed", tiers)
+
+    def test_redlight_unknown_tool_or_tier_name_fails_closed_boxed(self):
+        _, tiers, _ = self._redlight('{"disabled": ["run-code"]}')     # typo'd tool name
+        self.assertIn("boxed", tiers)
+        _, tiers, _ = self._redlight('{"disabled_tiers": ["boxd"]}')   # typo'd tier name
+        self.assertIn("boxed", tiers)
+
+    def test_redlight_wrong_typed_field_fails_closed_boxed(self):
+        _, tiers, _ = self._redlight('{"disabled": "run_code"}')       # a string, not a list
+        self.assertIn("boxed", tiers)
+        _, tiers, _ = self._redlight('{"disabled": [1, 2]}')           # non-string members
+        self.assertIn("boxed", tiers)
+
+    def test_redlight_non_regular_file_fails_closed_boxed(self):
+        d = tempfile.mkdtemp()                                          # a directory, not a file
+        self.assertEqual(speak.load_redlight(d), (set(), {"boxed"}, True))
+
+    def test_tool_allowed_granted_and_open(self):
+        self.assertTrue(speak.tool_allowed("move", {"move"}, set(), set()))
+
+    def test_tool_allowed_denies_ungranted(self):
+        self.assertFalse(speak.tool_allowed("move", set(), set(), set()))
+        self.assertFalse(speak.tool_allowed("run_code", {"move"}, set(), set()))
+
+    def test_tool_allowed_denies_unregistered_even_if_granted(self):
+        # the helper is self-consistent: an unknown name is denied even if it somehow
+        # appears in the grant set (belt-and-suspenders beyond parse_grant's filter).
+        self.assertFalse(speak.tool_allowed("bogus", {"bogus"}, set(), set()))
+
+    def test_tool_allowed_denies_by_name(self):
+        self.assertFalse(speak.tool_allowed("move", {"move"}, {"move"}, set()))
+
+    def test_tool_allowed_denies_by_tier_but_spares_safe(self):
+        self.assertFalse(speak.tool_allowed("run_code", {"run_code"}, set(), {"boxed"}))
+        self.assertTrue(speak.tool_allowed("move", {"move"}, set(), {"boxed"}))   # safe unaffected
+
+
+class DispatchAllowed(unittest.TestCase):
+    """The authorization SINK: a returned tool-call is acted on only if its (string)
+    name is in this turn's offered menu. This is the single most security-critical line
+    — a name-routing bypass here would defeat grant and the redlight kill-switch."""
+
+    def test_offered_move_acts(self):
+        self.assertEqual(speak.dispatch_allowed({"name": "move", "arguments": "{}"}, {"move"}), "move")
+
+    def test_not_offered_refused(self):
+        self.assertIsNone(speak.dispatch_allowed({"name": "run_code", "arguments": "{}"}, {"move"}))
+        self.assertIsNone(speak.dispatch_allowed({"name": "move", "arguments": "{}"}, set()))
+
+    def test_none_and_non_dict_tool(self):
+        self.assertIsNone(speak.dispatch_allowed(None, {"move"}))
+        self.assertIsNone(speak.dispatch_allowed("move", {"move"}))
+
+    def test_unhashable_or_nonstring_name_does_not_crash(self):
+        # a hostile/malformed wire shape must degrade to None, never TypeError out of the turn
+        for bad in ({"name": ["move"]}, {"name": 5}, {"name": None}, {"arguments": "{}"}):
+            self.assertIsNone(speak.dispatch_allowed(bad, {"move"}))
+
+
 class _FakeResp:
     """A minimal stand-in for urlopen()'s context-manager response."""
     def __init__(self, obj):

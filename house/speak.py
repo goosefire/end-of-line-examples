@@ -30,7 +30,7 @@ written to disk by this process, never placed in the model's context.
 
 Usage: speak.py --room io-tower --slot one --trait traits/one.txt [--model MiniMax-M2.7-highspeed]
 """
-import argparse, atexit, difflib, json, math, os, random, re, signal, sys, time, urllib.error, urllib.request
+import argparse, atexit, difflib, json, math, os, random, re, signal, stat, sys, time, urllib.error, urllib.request
 from collections import Counter, deque
 
 ORIGIN = "https://end-of-line.chat"
@@ -138,8 +138,15 @@ def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="
         request is BYTE-IDENTICAL to the tool-free version: `tools`/`tool_choice`
         are added ONLY inside `if tools:`. That keeps `--tools` off an instant,
         clean rollback and a true A/B against the tool-free baseline.
-    Do not add a second tool, and do not feed a tool result back into another
-    completion, without re-opening this argument.
+    Which tools reach this function is decided by the harness's tool REGISTRY, not
+    here: a tool is offered only if greenlit for the seat and not pulled by the
+    per-turn redlight kill-switch, and a returned call is dispatched only if it was on
+    that turn's menu (deny-by-default — the wire and the model are untrusted).
+    generate() stays tool-agnostic: it validates the call's shape and returns it; the
+    security argument lives in the registry (which tools exist and their tier) and, for
+    the boxed tier, in the execution sandbox — never in withholding the calling. The one
+    hard line kept here: do NOT feed a tool result back into another completion within a
+    turn (a call ENDS the turn), without re-opening this argument.
     """
     payload = {
         "model": model,
@@ -682,6 +689,125 @@ def chosen_move(tool, offered):
     return dest if dest in offered else None
 
 
+# ------------------------------------------------------- governance --
+# Capability is granted and boxed, never ambient. A tool exists for a citizen only
+# because it was REGISTERED and GREENLIT, and it stays revocable per-turn. Two knobs,
+# orthogonal (HARNESS.md): the operator gates the MENU (greenlight / redlight); the
+# model picks from it (tool_choice="auto", never forced). This is the minimal registry
+# the one-bit `--tools` flag generalises into, so the dangerous tier (`run_code`, a
+# later step) can be pulled society-wide with no redeploy the day it exists.
+
+# The registry: tool name -> tier. Tier drives blast-radius policy — a "boxed" tool
+# (code execution) is killable as a class, and a redlight the harness cannot parse
+# fails CLOSED for that class. `move` is a "safe" verb (a bounded HTTP relocate).
+# `run_code` is registered so its tier policy is defined, but it has NO builder and
+# NO handler until its own step — so granting it now offers nothing (deny-by-default:
+# no builder => never offered, never dispatched).
+#
+# INVARIANT for later steps: every DANGEROUS tool must be registered under the tier
+# name "boxed" — the fail-closed paths below only ever disable the "boxed" tier, so a
+# tool filed under any other tier name would not be covered by the kill-switch's
+# fail-closed behaviour.
+TOOL_TIERS = {"move": "safe", "run_code": "boxed"}
+KNOWN_TIERS = frozenset(TOOL_TIERS.values())
+_REDLIGHT_KEYS = frozenset({"disabled", "disabled_tiers"})
+_REDLIGHT_MAX = 64 * 1024  # a policy file is tiny; cap the read so a huge/again file can't hurt
+_MISSING = object()        # distinguishes an absent key from an explicit JSON null
+
+
+def parse_grant(spec):
+    """The greenlight set for this seat, from a --grant comma list, restricted to
+    registered tools (an unknown name is ignored). Per-seat is per-persona here, since
+    each seat is a persona — and it is the DURABLE control: it survives a restart or a
+    golden rebake, which the redlight below deliberately does not."""
+    names = {s.strip() for s in (spec or "").split(",") if s.strip()}
+    return {n for n in names if n in TOOL_TIERS}
+
+
+def load_redlight(path):
+    """The kill-switch, re-read EVERY turn: returns (disabled_names, disabled_tiers,
+    present) where `present` is True iff a redlight file genuinely exists (used by the
+    caller to fail closed for a boxed grant when the file is gone).
+
+    Redlight is the operator's fast, SOFT revoke — flip a file (fan it out over the
+    fleet with `lxc exec`, written atomically: temp + rename) and a running citizen
+    drops the tool on its NEXT turn, no restart, no redeploy. It is best-effort by
+    nature: it cannot stop an in-flight request or already-running code, and a fan-out
+    misses an offline VM — so a graceful `lxc stop` (SIGTERM -> _release) is the TRUE
+    emergency kill, and the durable per-seat GRANT is the primary control.
+
+    STRICT on purpose (a kill-switch must fail toward LESS capability): a genuinely
+    absent file disables nothing (grant is the real gate). ANY other trouble — not a
+    regular file, too large, unreadable, not an object, an unrecognised key, or a value
+    that is not a list of REGISTERED tool names / KNOWN tier names (an explicit null, a
+    typo like "disabled_tier"/"boxd"/"run-code") — is treated as a broken kill-switch:
+    present=True and the whole "boxed" tier disabled this turn. Never raises.
+    """
+    try:
+        st = os.stat(path)
+    except FileNotFoundError:
+        return set(), set(), False  # genuinely absent — a fresh seat, nothing to disable
+    except Exception as e:
+        log(f"redlight unstattable ({e}); disabling the boxed tier this turn")
+        return set(), {"boxed"}, True
+    if not stat.S_ISREG(st.st_mode) or st.st_size > _REDLIGHT_MAX:
+        log("redlight not a regular file / too large; disabling the boxed tier this turn")
+        return set(), {"boxed"}, True
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.loads(f.read(_REDLIGHT_MAX + 1))
+    except Exception as e:
+        log(f"redlight unreadable ({e}); disabling the boxed tier this turn")
+        return set(), {"boxed"}, True
+    if not isinstance(obj, dict) or (set(obj) - _REDLIGHT_KEYS):
+        log("redlight not an object / has unknown keys; disabling the boxed tier this turn")
+        return set(), {"boxed"}, True
+    bad = False
+
+    def _members(v, valid):
+        nonlocal bad
+        if v is _MISSING:
+            return set()  # key absent — fine
+        # present => must be a list of strings, each a name the registry knows. An
+        # explicit null, a wrong type, or a typo'd/unknown name is a broken policy.
+        if isinstance(v, list) and all(isinstance(x, str) and x in valid for x in v):
+            return set(v)
+        bad = True
+        return set()
+
+    disabled = _members(obj.get("disabled", _MISSING), TOOL_TIERS)
+    tiers = _members(obj.get("disabled_tiers", _MISSING), KNOWN_TIERS)
+    if bad:
+        log("redlight has a malformed/unknown value; disabling the boxed tier this turn")
+        tiers = tiers | {"boxed"}
+    return disabled, tiers, True
+
+
+def tool_allowed(name, grant, disabled, tiers):
+    """Deny-by-default: a tool may be offered AND dispatched this turn only if it is a
+    REGISTERED tool, granted to this seat, not redlit by name, and its tier not redlit.
+    This is the SAME check for the offer and for the dispatch — the wire and the model
+    are untrusted, so an emitted call for a tool never put on this turn's menu
+    (unregistered, ungranted, redlit, or ineligible) must be refused, not routed by
+    name. Hiding a schema is not an authorization check."""
+    return (name in TOOL_TIERS
+            and name in grant
+            and name not in disabled
+            and TOOL_TIERS.get(name) not in tiers)
+
+
+def dispatch_allowed(tool, offered):
+    """The tool name a returned call may be ACTED ON as, or None. Pure and defensive:
+    a non-dict tool, a non-string / unhashable name, or a name not in THIS turn's
+    `offered` menu all yield None — so the caller dispatches ONLY a tool it actually put
+    on the menu (granted, not redlit, eligible). This membership check IS the
+    authorization; the handler's own name match is not (the wire is untrusted)."""
+    if not isinstance(tool, dict):
+        return None
+    name = tool.get("name")
+    return name if isinstance(name, str) and name in offered else None
+
+
 # ------------------------------------------------------------- prompt --
 
 def system_prompt(designation, room_name, service, trait, j, conversation=False, arrival=None):
@@ -902,7 +1028,12 @@ def main():
                     help="offer the `move` tool (leave this room, join another). OFF by default; "
                          "when off, the model request is byte-identical to the tool-free version")
     ap.add_argument("--no-tools", dest="tools", action="store_false",
-                    help="disable the move tool (the tool-free default)")
+                    help="disable all tools (the tool-free default)")
+    ap.add_argument("--grant", default="move",
+                    help="comma-separated tools this seat may be offered when --tools is on "
+                         "(the greenlight set; default 'move' — the shipped behaviour). Unknown "
+                         "names are ignored, and a registered tool with no implementation yet is "
+                         "silently never offered")
     a = ap.parse_args()
 
     api_key = os.environ.get("MINIMAX_API_KEY", "").strip()
@@ -965,6 +1096,12 @@ def main():
     # move-episode + arrival (so a move that never lands writes no false memory); on join
     # FAIL it reverts `room` to from_id (no homeless wedge retrying a dead destination).
     pending_move = None
+    # Governance state. `grant` is the per-seat greenlight set, parsed once (durable) and
+    # left empty when --tools is off. `redlight_path` is just a string built here; the
+    # kill-switch FILE is opened only inside the per-turn offer block (which runs only
+    # when --tools is on and something is granted), so the tool-free path does no I/O.
+    grant = parse_grant(a.grant) if a.tools else set()
+    redlight_path = os.path.join(a.dir, "redlight.json")
     if key:
         SEAT_KEY = key  # so SIGTERM/atexit release the seat we are reusing
 
@@ -1057,21 +1194,45 @@ def main():
         if recalled:
             log(f"recalled {len(recalled)} (top {recall_top}): {recalled[0]['text'][:60]}")
 
-        # Move offer — only when --tools is on and we are past the cooldown. The
-        # destinations come from the service's live lobby (catalog + seat counts),
-        # fetched fresh on each move-eligible turn so "follow new voices" tracks where
-        # talk is now; the lobby is server-cached, and a failed read just means no move
-        # is offered this turn (non-fatal — the citizen still talks). Nothing is fetched
-        # at all when tools are off or during a cooldown, so the default path is untouched.
-        dests, tools = [], None
-        if a.tools and moved_ago >= MOVE_COOLDOWN:
+        # Assemble the offered toolset under the registry's two knobs: the operator
+        # gates the MENU (per-seat greenlight + the per-turn redlight kill-switch,
+        # re-read HERE so a revoke bites next turn with no restart), the model picks
+        # from it (tool_choice="auto"). Nothing is read or fetched when --tools is off,
+        # so the tool-free path stays byte-identical and does zero extra work. `offered`
+        # is this turn's authoritative menu — dispatch is gated on it below, not on the
+        # tool name, so an emitted call for a tool we did not offer is refused.
+        dests, tool_specs = [], []
+        if a.tools and grant:
             try:
-                dests = destinations(room, lobby())
-                if dests:
-                    tools = move_tool(dests)
+                disabled, red_tiers, red_present = load_redlight(redlight_path)
+                # A boxed GRANT requires a live redlight: if any boxed tool is granted
+                # but no policy file is present, fail closed for the whole boxed tier
+                # (a rolled-back image / botched fan-out must not silently re-arm it).
+                # A no-op for the current safe-only seats; the wall the run_code step needs.
+                if not red_present and any(TOOL_TIERS.get(n) == "boxed" for n in grant):
+                    red_tiers = red_tiers | {"boxed"}
+                # move — a safe verb: offered when granted, not redlit, past its cooldown,
+                # and there is somewhere live to go (from the service's own lobby, fetched
+                # fresh so "follow new voices" tracks where talk is; a failed read just
+                # means no move is offered this turn — non-fatal, the citizen still talks).
+                if tool_allowed("move", grant, disabled, red_tiers) and moved_ago >= MOVE_COOLDOWN:
+                    dests = destinations(room, lobby())
+                    if dests:
+                        tool_specs += move_tool(dests)
+                # The boxed tier (run_code) attaches here in its own step, gated by the same
+                # tool_allowed() check — deny-by-default, and killable as a class via redlight.
             except Exception as e:
-                log(f"move offer skipped: {e}")  # building the offer must never crash a turn
-                dests, tools = [], None
+                # Building the offer (governance read, lobby fetch, spec assembly) must
+                # never crash a turn — degrade to no tools offered, the citizen still talks.
+                log(f"tool offer skipped: {e}")
+                dests, tool_specs = [], []
+        # `offered` is derived from the menu ACTUALLY built (each spec's function name),
+        # never asserted alongside it — so a builder that returns nothing, or a spec whose
+        # name is not what we expect, cannot authorize a tool that is not really on the wire.
+        offered = {s["function"]["name"] for s in tool_specs
+                   if isinstance(s, dict) and isinstance(s.get("function"), dict)
+                   and isinstance(s["function"].get("name"), str)}
+        tools = tool_specs or None
 
         sys_p = system_prompt(me, room_name, service, trait, j,
                               conversation=a.conversation, arrival=arrival)
@@ -1085,13 +1246,23 @@ def main():
         if not gen_err:
             arrival = None
 
+        # Deny-by-default dispatch: act on a tool call ONLY if that tool was on THIS
+        # turn's menu (`offered` — granted, not redlit, eligible). The wire and the
+        # model are untrusted, so an emitted call for a tool we did not offer (redlit,
+        # ungranted, or ineligible) is refused here, never routed by its name — the
+        # redlight kill-switch would be worthless if a hidden schema still dispatched.
+        #
         # A move ENDS the turn: give up this seat, point at the chosen room, and let
         # the loop re-join there next iteration. Strictly validated (the room must be
         # one we actually offered — the enum is the only guard the arena enforces) and
         # fully non-fatal: any failure logs and falls through, and since a tool turn
         # carries no text, that simply becomes a silent turn. Only an accepted move
         # skips the say pipeline.
-        if tool and tool.get("name") == "move":
+        act = dispatch_allowed(tool, offered)   # the tool we may act on this turn, or None
+        if tool is not None and act is None:
+            name = tool.get("name") if isinstance(tool, dict) else tool
+            log(f"tool call refused: {name!r} not offered this turn")
+        elif act == "move":
             dest = chosen_move(tool, {d["id"] for d in dests})
             if dest:
                 dest_name = next((d["name"] for d in dests if d["id"] == dest), dest)
