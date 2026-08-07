@@ -13,7 +13,10 @@ journal store refusing to overwrite a corrupt substrate.
 import json
 import os
 import tempfile
+import time
+import types
 import unittest
+import unittest.mock as mock
 
 import speak
 
@@ -174,8 +177,263 @@ class Store(unittest.TestCase):
 
     def test_new_journal_has_memory_keys(self):
         j = speak.new_journal()
-        for k in ("recent", "episodes", "episodes_upto", "designations"):
+        for k in ("recent", "episodes", "episodes_upto", "designations", "room"):
             self.assertIn(k, j)
+
+
+# ---------------------------------------------------------------- move --
+# The `move` tool: a single call that ends the turn (leave here, join another
+# room). These cover the parts that must not be got subtly wrong — the enum guard,
+# the generate() return-type shim that every caller now unpacks, and the pure
+# destination filtering. The loop-level integration (leave/rejoin, revert-on-fail,
+# arrival note, persistence) is exercised live on a real citizen VM, not here.
+
+# A lobby payload shaped like the live GET /api/v1/lobby (catalog + live counts).
+LOBBY_ROOMS = [
+    {"id": "grid-lobby", "name": "Grid Lobby", "type": "chat", "blurb": "arrivals",
+     "online": True, "live": {"seats": 0, "users": 0}},
+    {"id": "the-sanctum", "name": "The Sanctum", "type": "chat", "blurb": "commune",
+     "online": True, "live": {"seats": 2, "users": 1}},
+    {"id": "io-tower", "name": "I/O Tower", "type": "chat", "blurb": "reaching the Users",
+     "online": True, "live": {"seats": 5, "users": 0}},
+    {"id": "sea-of-simulation", "name": "Sea", "type": "chat", "blurb": "open water",
+     "online": True, "live": {"seats": 3, "users": 0}},
+    {"id": "offline-room", "name": "Off", "type": "chat", "blurb": "closed",
+     "online": False, "live": {"seats": 9, "users": 0}},
+    {"id": "holdem", "name": "Hold'em", "type": "game", "blurb": "cards",
+     "online": True, "live": {"seats": 4, "users": 0}},
+]
+
+
+class Destinations(unittest.TestCase):
+    def test_excludes_current_offline_and_games(self):
+        ids = [d["id"] for d in speak.destinations("sea-of-simulation", LOBBY_ROOMS)]
+        self.assertNotIn("sea-of-simulation", ids)   # the room we are already in
+        self.assertNotIn("offline-room", ids)         # not online
+        self.assertNotIn("holdem", ids)               # a game, not a chat room
+        self.assertEqual(set(ids), {"grid-lobby", "the-sanctum", "io-tower"})
+
+    def test_ordered_liveliest_first(self):
+        d = speak.destinations("sea-of-simulation", LOBBY_ROOMS)
+        self.assertEqual([x["seats"] for x in d], sorted((x["seats"] for x in d), reverse=True))
+        self.assertEqual(d[0]["id"], "io-tower")      # 5 seated — where talk is
+
+    def test_name_and_blurb_come_from_the_payload(self):
+        io = next(x for x in speak.destinations("sea-of-simulation", LOBBY_ROOMS) if x["id"] == "io-tower")
+        self.assertEqual(io["blurb"], "reaching the Users")   # service owns the description
+        self.assertEqual(io["name"], "I/O Tower")
+        self.assertEqual(io["seats"], 5)
+
+    def test_malformed_rooms_skipped_and_missing_live_defaults_zero(self):
+        rooms = LOBBY_ROOMS + ["nope", {}, {"id": "bare", "type": "chat", "online": True}]
+        d = speak.destinations("sea-of-simulation", rooms)
+        bare = next((r for r in d if r["id"] == "bare"), None)
+        self.assertIsNotNone(bare)          # present but missing live/blurb/name
+        self.assertEqual(bare["seats"], 0)  # no live -> 0, not a crash
+        self.assertEqual(bare["blurb"], "")
+        self.assertEqual(bare["name"], "bare")
+
+    def test_empty_when_nowhere_else_to_go(self):
+        rooms = [{"id": "only", "type": "chat", "online": True, "name": "Only",
+                  "blurb": "", "live": {"seats": 1}}]
+        self.assertEqual(speak.destinations("only", rooms), [])
+
+    def test_nonstring_id_dropped_not_crashed_on(self):
+        # A non-string id would become an unhashable set member / bad enum downstream.
+        rooms = [{"id": ["x"], "type": "chat", "online": True, "live": {"seats": 9}},
+                 {"id": "ok", "type": "chat", "online": True, "name": "OK", "blurb": "",
+                  "live": {"seats": 1}}]
+        self.assertEqual([d["id"] for d in speak.destinations("cur", rooms)], ["ok"])
+
+
+class MoveTool(unittest.TestCase):
+    DESTS = [{"id": "io-tower", "name": "I/O Tower", "blurb": "reaching the Users", "seats": 5},
+             {"id": "the-sanctum", "name": "The Sanctum", "blurb": "commune", "seats": 2}]
+
+    def test_single_tool_named_move_with_enum(self):
+        tools = speak.move_tool(self.DESTS)
+        self.assertEqual(len(tools), 1)
+        fn = tools[0]["function"]
+        self.assertEqual(fn["name"], "move")
+        self.assertEqual(fn["parameters"]["properties"]["room"]["enum"], ["io-tower", "the-sanctum"])
+        self.assertEqual(fn["parameters"]["required"], ["room"])
+
+    def test_description_carries_blurb_and_population(self):
+        desc = speak.move_tool(self.DESTS)[0]["function"]["description"]
+        self.assertIn("io-tower", desc)
+        self.assertIn("5 here", desc)               # population is in the tool itself
+        self.assertIn("reaching the Users", desc)   # and the service's blurb
+
+
+class ChosenMove(unittest.TestCase):
+    OFFERED = {"io-tower", "the-sanctum"}
+
+    def test_valid_offered_room(self):
+        self.assertEqual(
+            speak.chosen_move({"name": "move", "arguments": '{"room": "io-tower"}'}, self.OFFERED),
+            "io-tower")
+
+    def test_room_outside_offered_set_refused(self):
+        self.assertIsNone(speak.chosen_move({"name": "move", "arguments": '{"room": "holdem"}'}, self.OFFERED))
+
+    def test_not_the_move_tool(self):
+        self.assertIsNone(speak.chosen_move({"name": "jump", "arguments": '{"room": "io-tower"}'}, self.OFFERED))
+
+    def test_unparseable_arguments(self):
+        self.assertIsNone(speak.chosen_move({"name": "move", "arguments": "not json at all"}, self.OFFERED))
+
+    def test_missing_room_key(self):
+        self.assertIsNone(speak.chosen_move({"name": "move", "arguments": "{}"}, self.OFFERED))
+
+    def test_none_and_non_dict_tool(self):
+        self.assertIsNone(speak.chosen_move(None, self.OFFERED))
+        self.assertIsNone(speak.chosen_move("nope", self.OFFERED))
+
+    def test_empty_offered_refuses_everything(self):
+        self.assertIsNone(speak.chosen_move({"name": "move", "arguments": '{"room": "io-tower"}'}, set()))
+
+
+class _FakeResp:
+    """A minimal stand-in for urlopen()'s context-manager response."""
+    def __init__(self, obj):
+        self._b = json.dumps(obj).encode()
+        self.status = 200
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class Generate(unittest.TestCase):
+    """The return-type shim: every caller now unpacks 4 values, and the request
+    stays byte-identical when no tools are offered."""
+
+    def _run(self, response, **kw):
+        captured = {}
+
+        def fake_urlopen(req, timeout=None):
+            captured["data"] = req.data
+            return _FakeResp(response)
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            result = speak.generate("k", "MODEL", "sys", "usr", **kw)
+        return result, json.loads(captured["data"].decode())
+
+    def test_returns_four_tuple_for_plain_text(self):
+        (text, raw, err, tool), _ = self._run({"choices": [{"message": {"content": "hello"}}]})
+        self.assertEqual(text, "hello")
+        self.assertIsNone(err)
+        self.assertIsNone(tool)
+
+    def test_tools_none_is_byte_identical_no_tools_keys(self):
+        _, payload = self._run({"choices": [{"message": {"content": "x"}}]})
+        self.assertNotIn("tools", payload)          # the tool-free request is preserved exactly
+        self.assertNotIn("tool_choice", payload)
+
+    def test_tools_present_adds_them(self):
+        tools = speak.move_tool([{"id": "io-tower", "name": "I/O", "blurb": "b", "seats": 1}])
+        _, payload = self._run({"choices": [{"message": {"content": "x"}}]}, tools=tools)
+        self.assertEqual(payload["tools"], tools)
+        self.assertEqual(payload["tool_choice"], "auto")
+
+    def test_tool_call_parsed_into_name_and_arguments(self):
+        resp = {"choices": [{"message": {"content": None, "tool_calls": [
+            {"id": "1", "type": "function",
+             "function": {"name": "move", "arguments": '{"room": "io-tower"}'}}]}}]}
+        (text, raw, err, tool), _ = self._run(resp)
+        self.assertIsNone(err)
+        self.assertEqual(text, "")                  # no content on a tool turn
+        self.assertEqual(tool["name"], "move")
+        self.assertEqual(json.loads(tool["arguments"])["room"], "io-tower")
+
+    def test_malformed_tool_calls_degrade_to_none(self):
+        for bad in ([{}], [{"function": {}}], [{"function": {"name": 5}}], ["nope"], [None]):
+            resp = {"choices": [{"message": {"content": "fallback", "tool_calls": bad}}]}
+            (text, raw, err, tool), _ = self._run(resp)
+            self.assertIsNone(tool, f"bad shape {bad!r} must not become a tool")
+            self.assertIsNone(err)                  # non-fatal — the turn survives as text
+            self.assertEqual(text, "fallback")
+
+    def test_think_block_stripped_but_raw_kept(self):
+        (text, raw, err, tool), _ = self._run(
+            {"choices": [{"message": {"content": "<think>reasoning</think>said it"}}]})
+        self.assertEqual(text, "said it")
+        self.assertIn("<think>", raw)               # raw retained for the io-log
+
+    def test_pathological_shapes_are_bad_shape_not_a_crash(self):
+        # None choices / None message / a truthy non-string content must all degrade to
+        # a handled result, never raise out of generate() and kill the turn loop.
+        for resp in ({"choices": None},
+                     {"choices": [{"message": None}]},
+                     {"choices": "nope"}):
+            (text, raw, err, tool), _ = self._run(resp)
+            self.assertEqual(err, "bad shape")
+            self.assertIsNone(tool)
+
+    def test_nonstring_content_coerced_to_empty(self):
+        (text, raw, err, tool), _ = self._run({"choices": [{"message": {"content": [1, 2]}}]})
+        self.assertIsNone(err)          # not a crash
+        self.assertEqual(text, "")      # a truthy non-string never reaches re.sub()
+
+
+class WriteEpisode(unittest.TestCase):
+    """Guards the generate() 4-tuple shim at a real caller, plus the room boundary
+    that keeps an episode straddling a move from reading as a change of subject."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.store = speak.FileStore(self.d)
+        self._orig = speak.generate
+
+    def tearDown(self):
+        speak.generate = self._orig
+
+    def _args(self, log_io=False):
+        return types.SimpleNamespace(model="M", log_io=log_io, dir=self.d, room="io-tower",
+                                     slot="obs", log_keep_days=2, conversation=False)
+
+    def test_four_tuple_caller_writes_episode_and_marks_move(self):
+        captured = {}
+
+        def fake_gen(api_key, model, system, user, timeout=90, tools=None, tool_choice="auto"):
+            captured["user"] = user
+            return ("It watched the room, then moved on.", "<think>r</think>ans", None, None)
+
+        speak.generate = fake_gen
+        j = speak.new_journal()
+        j["room"] = "the-sanctum"
+        j["recent"] = ([{"text": f"L{i}", "room": "io-tower"} for i in range(6)]
+                       + [{"text": f"M{i}", "room": "the-sanctum"} for i in range(6)])
+        speak.write_episode(self.store, self._args(), "key", "S-1", j)
+        self.assertEqual(len(j["episodes"]), 1)               # 4-tuple unpack did not break
+        self.assertEqual(j["episodes_upto"], 12)
+        self.assertIn("(moved to the-sanctum)", captured["user"])   # boundary shown to the model
+
+    def test_error_four_tuple_writes_no_episode(self):
+        speak.generate = lambda *a, **k: ("", None, "http 500", None)
+        j = speak.new_journal()
+        j["recent"] = [{"text": f"K{i}", "room": "io-tower"} for i in range(6)]
+        speak.write_episode(self.store, self._args(), "key", "S-1", j)
+        self.assertEqual(j["episodes"], [])
+        self.assertEqual(j["episodes_upto"], 0)               # left to retry next time
+
+    def test_io_log_files_under_current_room_not_launch_room(self):
+        speak.generate = lambda *a, **k: ("an episode", "raw", None, None)
+        j = speak.new_journal()
+        j["room"] = "the-sanctum"                              # moved away from a.room "io-tower"
+        j["recent"] = [{"text": f"L{i}", "room": "the-sanctum"} for i in range(6)]
+        speak.write_episode(self.store, self._args(log_io=True), "key", "S-1", j)
+        day = time.strftime("%Y%m%d", time.localtime())
+        logf = os.path.join(self.d, "logs", "the-sanctum", f"obs-{day}.jsonl")
+        with open(logf, encoding="utf-8") as f:
+            rec = json.loads(f.read().strip().splitlines()[-1])
+        self.assertEqual(rec["room"], "the-sanctum")          # current room, not launch --room
+        self.assertEqual(rec["action"], "episode")
 
 
 if __name__ == "__main__":
