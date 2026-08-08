@@ -335,6 +335,44 @@ class FileStore:
 
 # ----------------------------------------------------------------- io log --
 
+def _dated_jsonl(base, slot, keep_days, record):
+    """Append one JSON record to <base>/<slot>-<day>.jsonl, then prune this slot's
+    older dated files. Shared by the I/O log and the choice log so both inherit the
+    same three properties: a single writer per slot (one process owns a slot, so no
+    lock is needed), a prune matched on an EXACT name shape rather than a glob (so no
+    other file in the directory is ever at risk), and the rule that a logging failure
+    degrades to a log line and never crashes a turn.
+    """
+    now = time.time()
+    day = time.strftime("%Y%m%d", time.localtime(now))
+    try:
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, f"{slot}-{day}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as e:
+        log(f"log write failed ({base}): {e}")
+        return
+    if keep_days < 1:
+        return  # pruning disabled; never delete on a misconfigured retention
+    # cutoff derives from the SAME `now` as the filename, so today's file can never
+    # delete itself; the arithmetic that could overflow on an absurd keep_days stays
+    # inside the try, so a bad value never crashes the turn.
+    try:
+        cutoff = time.strftime("%Y%m%d", time.localtime(now - (keep_days - 1) * 86400))
+        prefix, suffix = f"{slot}-", ".jsonl"
+        for name in os.listdir(base):
+            if not (name.startswith(prefix) and name.endswith(suffix)):
+                continue
+            stamp = name[len(prefix):-len(suffix)]
+            if len(stamp) == 8 and stamp.isdigit() and stamp < cutoff:
+                try:
+                    os.remove(os.path.join(base, name))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
+
 def io_log(dirpath, room, slot, keep_days, record):
     """Append one turn's model I/O to a per-day, per-slot JSONL file, then keep
     only the last `keep_days` days of THIS slot's logs (1 = today only).
@@ -357,36 +395,66 @@ def io_log(dirpath, room, slot, keep_days, record):
     accepted as cosmetic (a few small files, never growing without bound), not
     fixed by pruning across rooms, which would blur the single-writer property.
     """
-    now = time.time()
-    day = time.strftime("%Y%m%d", time.localtime(now))
-    base = os.path.join(dirpath, "logs", room)
-    try:
-        os.makedirs(base, exist_ok=True)
-        with open(os.path.join(base, f"{slot}-{day}.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-    except Exception as e:
-        log(f"io-log write failed: {e}")
-        return
-    if keep_days < 1:
-        return  # pruning disabled; never delete on a misconfigured retention
-    # Keep `day` plus (keep_days - 1) prior days; prune older. cutoff derives from
-    # the SAME `now` as the filename, so today's file (stamp == day) is never
-    # < cutoff and cannot delete itself; and the arithmetic that could overflow on
-    # an absurd keep_days stays inside the try, so a bad value never crashes the turn.
-    try:
-        cutoff = time.strftime("%Y%m%d", time.localtime(now - (keep_days - 1) * 86400))
-        prefix, suffix = f"{slot}-", ".jsonl"
-        for name in os.listdir(base):
-            if not (name.startswith(prefix) and name.endswith(suffix)):
-                continue
-            stamp = name[len(prefix):-len(suffix)]
-            if len(stamp) == 8 and stamp.isdigit() and stamp < cutoff:
-                try:
-                    os.remove(os.path.join(base, name))
-                except OSError:
-                    pass
-    except Exception:
-        pass
+    _dated_jsonl(os.path.join(dirpath, "logs", room), slot, keep_days, record)
+
+
+CHOICE_CODE_MAX = 2000   # chars of submitted code kept verbatim in the choice log
+
+
+def withheld(grant, offered, moved_ago, ran_ago, dests):
+    """Why a GRANTED tool is not on this turn's menu.
+
+    This is the difference between a citizen that DECLINED a capability and one that
+    never had it that turn, and without it every quiet turn reads alike. Cooldowns and
+    an empty destination list are ordinary pacing; anything else is the governance gate
+    (redlit, or the boxed tier failing closed) and is worth seeing in the record.
+    """
+    out = {}
+    for name in sorted(grant):
+        if name in offered:
+            continue
+        if name == "move" and moved_ago < MOVE_COOLDOWN:
+            out[name] = "cooldown"
+        elif name == "move" and not dests:
+            out[name] = "no destinations"
+        elif name == "run_code" and ran_ago < RUN_COOLDOWN:
+            out[name] = "cooldown"
+        else:
+            out[name] = "gated"   # redlit, unregistered, or the boxed fail-closed
+    return out
+
+
+def silence_kind(raw, raw_content):
+    """Told apart because they mean opposite things: a citizen that PASSED, versus a
+    reply that existed and was lost on the way out. `(silence)` is the model's explicit
+    pass. An empty reply whose reasoning block simply ran to the token cap is the
+    truncation failure mode, which used to be indistinguishable from a pass in every
+    log; that is exactly how it went unnoticed.
+    """
+    if (raw or "").lower().startswith("(silence"):
+        return "deliberate"
+    rc = raw_content or ""
+    if "</think>" in rc and not rc.split("</think>")[-1].strip():
+        return "lost"
+    return "empty"
+
+
+def choice_log(dirpath, slot, keep_days, record):
+    """One compact row per turn: what was ON THE MENU, and what was done with it.
+
+    Deliberately separate from the I/O log. That one answers "what did the model see
+    and say" and carries whole prompts, so it runs to megabytes a day and is awkward to
+    read across a shift. This answers a different question, what was CHOSEN against what
+    was AVAILABLE, and a choice is only legible beside the menu it was made from:
+    "stayed put" means nothing until you know whether anywhere else had people in it,
+    and "said nothing" means nothing until you know run_code was on the wire and off
+    cooldown. A turn whose only option was to talk is not a decision to talk.
+
+    Filed per SLOT rather than per room (unlike the I/O log), because the subject here
+    is one citizen's behaviour over time; filing by room would split its own decision
+    history across directories every time it moves.
+    """
+    _dated_jsonl(os.path.join(dirpath, "choices"), slot, keep_days, record)
 
 
 def consolidate(api_key, model, trait, j):
@@ -1197,6 +1265,11 @@ def main():
                     help="disable model I/O logging")
     ap.add_argument("--log-keep-days", type=int, default=2,
                     help="days of this slot's I/O logs to retain; 2 = today + yesterday (older pruned)")
+    ap.add_argument("--log-choices", dest="log_choices", action="store_true", default=True,
+                    help="log each turn's MENU and the choice made from it to "
+                         "<dir>/choices/<slot>-<day>.jsonl (default on)")
+    ap.add_argument("--no-log-choices", dest="log_choices", action="store_false",
+                    help="disable choice logging")
     ap.add_argument("--conversation", dest="conversation", action="store_true", default=False,
                     help="reframe the room as open conversation, not a game lobby (drops the games/commands misread)")
     ap.add_argument("--memory", dest="memory", action="store_true", default=True,
@@ -1421,6 +1494,21 @@ def main():
                    and isinstance(s["function"].get("name"), str)}
         tools = tool_specs or None
 
+        # The MENU, captured the moment it is settled and before the model sees it.
+        # Recorded beside the decision because the decision is meaningless without it:
+        # a turn that could only talk is not a turn that chose to talk. `withheld` says
+        # why a granted tool is missing, so an absent capability is never mistaken for a
+        # declined one.
+        choice = {
+            "menu": {
+                "tools": sorted(offered),
+                "grant": sorted(grant),
+                "withheld": withheld(grant, offered, moved_ago, ran_ago, dests),
+                "dests": [{"id": d["id"], "seats": d["seats"]} for d in dests],
+            },
+            "chose": None, "call": None, "saw_run_result": False, "err": None,
+        }
+
         sys_p = system_prompt(me, room_name, service, trait, j,
                               conversation=a.conversation, arrival=arrival)
         # A pending run result is shown exactly once. It is taken from the journal and
@@ -1429,6 +1517,10 @@ def main():
         pending_run = j.pop("pending_run", None)
         if pending_run:
             store.put(a.slot, j)
+        # Whether the sandbox result landed THIS turn is the hinge for reading what
+        # follows: a citizen acting on an output is a different event from one acting
+        # without it.
+        choice["saw_run_result"] = bool(pending_run)
         usr_p = user_prompt(seated, transcript_of(state, me), recalled,
                             destinations=dests if tools else None,
                             pending_run=pending_run)
@@ -1456,6 +1548,9 @@ def main():
         if tool is not None and act is None:
             name = tool.get("name") if isinstance(tool, dict) else tool
             log(f"tool call refused: {name!r} not offered this turn")
+            choice["chose"] = "refused"
+            choice["call"] = {"name": name if isinstance(name, str) else None,
+                              "dispatched": False}
         elif act == "run_code":
             # A run does NOT end the turn the way a move does, and must NOT `continue`:
             # doing so would skip the cooldown counters, the episode fold, the io-log and
@@ -1466,6 +1561,8 @@ def main():
             code = chosen_code(tool)
             if code is None:
                 log("run_code call ignored: unusable code argument")
+                choice["chose"] = "run_rejected"
+                choice["call"] = {"name": "run_code", "dispatched": False}
             else:
                 log(f"run_code: {len(code)}B -> executor")
                 res = run_boxed(code)
@@ -1495,6 +1592,18 @@ def main():
                     })
                 log(f"run_code: {res.get('status')} "
                     f"({len(res.get('stdout') or '')}B out)")
+                # The CODE itself, bounded. Its absence was a real hole: the broker logs
+                # only a byte count and the I/O log only a size, so a run could be seen
+                # to have happened and never read.
+                choice["chose"] = "run_code"
+                choice["call"] = {"name": "run_code", "dispatched": True}
+                choice["ran"] = {
+                    "code": code[:CHOICE_CODE_MAX],
+                    "code_len": len(code),
+                    "status": str(res.get("status"))[:40],
+                    "out_len": len(res.get("stdout") or ""),
+                    "err_len": len(res.get("stderr") or ""),
+                }
         elif act == "move":
             dest = chosen_move(tool, {d["id"] for d in dests})
             if dest:
@@ -1508,6 +1617,24 @@ def main():
                         "error": None, "system": sys_p, "user": usr_p,
                         "output": f"move -> {dest}", "raw_content": raw_content, "posted": None,
                     })
+                # Recorded from the room it is LEAVING, against the list it was offered.
+                # `took_liveliest` is the population lever made measurable: dests arrive
+                # sorted by seats, so following the crowd and picking against it are
+                # distinguishable after the fact.
+                if a.log_choices:
+                    seats = next((d["seats"] for d in dests if d["id"] == dest), None)
+                    choice["chose"] = "move"
+                    choice["call"] = {"name": "move", "dispatched": True}
+                    choice["move"] = {
+                        "to": dest,
+                        "seats": seats,
+                        "options": len(dests),
+                        "took_liveliest": bool(dests) and dest == dests[0]["id"],
+                    }
+                    choice_log(a.dir, a.slot, a.log_keep_days, dict(
+                        ts=int(time.time() * 1000),
+                        iso=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                        slot=a.slot, seat=me, room=room, model=a.model, **choice))
                 # Fold any lines said here-and-not-yet-episoded BEFORE recording the move,
                 # so the timeline reads "said things in X, then left X" and never the
                 # reverse. A move is a natural episode boundary; the fold is a no-op when
@@ -1544,6 +1671,10 @@ def main():
                 # Not a room we offered (or unparseable args). Stay put; the tool turn
                 # has no text, so it falls through to a silent turn.
                 log(f"move ignored: args {tool.get('arguments')!r} not an offered destination")
+                # An intent that produced no act: the citizen tried to go somewhere it
+                # was not offered. Distinct from staying put, and invisible without this.
+                choice["chose"] = "move_rejected"
+                choice["call"] = {"name": "move", "dispatched": False}
 
         # A leading "DESIG: " is this program choosing to direct the line at one
         # other. Lift it into the API's `to` so the arena records it as addressed
@@ -1622,6 +1753,26 @@ def main():
                 "recalled": [e["text"][:90] for e in recalled],
                 "recall_top": recall_top,
             })
+
+        # One row per turn, emitted here because every path except an accepted move
+        # ends at this epilogue — including a run_code turn, which deliberately does
+        # not end the turn and so is recorded with whatever the citizen did after it.
+        if a.log_choices:
+            if choice["chose"] is None:
+                choice["chose"] = {"said": "say", "say_failed": "say",
+                                   "error": "error"}.get(action, "silence")
+            if action in ("said", "say_failed"):
+                choice["say"] = {"len": len(raw or ""), "to": to,
+                                 "posted": posted is not None}
+            elif action == "repeat_suppressed":
+                choice["silence"] = "repeat_suppressed"
+            elif action == "silence":
+                choice["silence"] = silence_kind(raw, raw_content)
+            choice["err"] = gen_err
+            choice_log(a.dir, a.slot, a.log_keep_days, dict(
+                ts=int(time.time() * 1000),
+                iso=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+                slot=a.slot, seat=me, room=room, model=a.model, **choice))
 
         # Episodic memory (the layer the old note anticipated, built safely). The
         # lossy consolidate() collapsed because it re-summarized its own concentrate

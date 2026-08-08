@@ -650,3 +650,57 @@ class RunCodeGate(unittest.TestCase):
         # The fail-closed paths only ever disable the "boxed" tier, so a dangerous
         # tool filed under any other name would escape the kill-switch.
         self.assertEqual(speak.TOOL_TIERS["run_code"], "boxed")
+
+
+class ChoiceLog(unittest.TestCase):
+    """The choice log's job is to make a decision legible next to the menu it was made
+    from. These pin the two distinctions that job rests on."""
+
+    def test_withheld_separates_declined_from_unavailable(self):
+        # The whole point: a tool absent from the menu must never be counted as one the
+        # citizen turned down. Each reason is reported, so the rate can be taken against
+        # real opportunities rather than against every turn.
+        grant = {"move", "run_code"}
+        dests = [{"id": "grid-lobby", "seats": 2}]
+        self.assertEqual(speak.withheld(grant, {"move", "run_code"}, 9, 9, dests), {})
+        self.assertEqual(speak.withheld(grant, {"move"}, 9, 0, dests),
+                         {"run_code": "cooldown"})
+        self.assertEqual(speak.withheld(grant, {"run_code"}, 9, 9, []),
+                         {"move": "no destinations"})
+        # Neither cooling nor destination-less: the governance gate (redlit, or the
+        # boxed tier failing closed) is what is left, and it must be visible.
+        self.assertEqual(speak.withheld(grant, {"move"}, 9, 9, dests),
+                         {"run_code": "gated"})
+
+    def test_withheld_ignores_tools_never_granted(self):
+        # A seat that was never given run_code has not withheld it — it is not its menu.
+        self.assertEqual(speak.withheld({"move"}, {"move"}, 9, 9, [{"id": "x", "seats": 1}]), {})
+
+    def test_silence_kind_distinguishes_a_pass_from_a_lost_reply(self):
+        # These meant the same thing in every log until the truncation bug was found,
+        # which is precisely how it stayed hidden.
+        self.assertEqual(speak.silence_kind("(silence)", "<think>t</think>(silence)"),
+                         "deliberate")
+        self.assertEqual(speak.silence_kind("", "<think>" + "r" * 5000 + "</think>"),
+                         "lost")
+        self.assertEqual(speak.silence_kind("", ""), "empty")
+
+    def test_choice_log_files_per_slot_across_rooms(self):
+        # Unlike the I/O log, one citizen's decisions stay in ONE file even as it moves,
+        # so its behaviour over time is readable without stitching directories together.
+        with tempfile.TemporaryDirectory() as d:
+            speak.choice_log(d, "s1", 2, {"room": "grid-lobby", "chose": "say"})
+            speak.choice_log(d, "s1", 2, {"room": "sea-of-simulation", "chose": "move"})
+            base = os.path.join(d, "choices")
+            self.assertEqual(len(os.listdir(base)), 1)
+            rows = [json.loads(x) for x in
+                    open(os.path.join(base, os.listdir(base)[0]))]
+            self.assertEqual([r["room"] for r in rows],
+                             ["grid-lobby", "sea-of-simulation"])
+
+    def test_choice_log_never_raises_into_the_turn(self):
+        # Logging is not worth a turn. An unwritable path and an unserialisable record
+        # must both degrade quietly.
+        speak.choice_log("/proc/nonexistent-eol", "s1", 2, {"ok": True})
+        with tempfile.TemporaryDirectory() as d:
+            speak.choice_log(d, "s1", 2, {"bad": object()})
