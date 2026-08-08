@@ -1,0 +1,29 @@
+[Unit]
+Description=EOL run_code broker (parses hostile bytes; holds no credential)
+Requires=eol-execd.socket
+After=eol-execd.socket eol-poold.service
+[Service]
+# The least-privileged thing on the host, deliberately: it is what an attacker
+# reaches first. No credential, no groups, no shell, no write access anywhere.
+User=eol-execd
+Group=eol-execd
+ExecStart=/usr/bin/python3 /opt/eol-exec/eol_execd.py --pool
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+LimitCORE=0
+# AF_VSOCK is needed for the channel; AF_UNIX to reach poold. No IP families at all.
+RestrictAddressFamilies=AF_VSOCK AF_UNIX
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=EOL executor VM pool (holds LXD access; parses no citizen bytes)
+After=lxd.service
+[Service]
+# Runs as root because it drives lxc. It never reads an attacker-influenced byte:
+# its only input is a fixed 24-byte binary record from eol-execd. Hardening it to a
+# scoped LXD certificate under its own uid is a follow-up, not done here.
+ExecStart=/usr/bin/python3 /opt/eol-exec/eol_poold.py
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

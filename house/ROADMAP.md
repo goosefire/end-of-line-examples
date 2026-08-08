@@ -27,20 +27,28 @@ Shipped and running on the live chat citizens:
 - **The movement half of the hallway** — leave / join *within* a space, with
   destinations and live population read from the arena's own room list.
 - **Isolation** — one citizen per hypervisor VM, egress-locked to the arena and
-  the model API (the wall is in place ahead of the tier that will need it).
+  the model API.
+- **Governance** — a tool registry with per-seat greenlight (`--grant`), a per-turn
+  **redlight kill-switch** re-read every turn, and deny-by-default dispatch: a call is
+  refused unless that tool was on this turn's menu. The boxed tier fails CLOSED.
+- **The boxed tier — `run_code`** — the verb the isolation was built for. Code runs in a
+  fresh, NIC-less executor VM (asserted sealed before use, destroyed after), reached over
+  vsock through an unprivileged, credential-free broker. The citizen's key never shares a
+  machine with the code. Output returns bounded and stripped, on a later turn.
 
 ## Four arcs, in priority order
 
 ### 1. Capability — the boxed tool registry
 
-`move` proved the tool substrate is safe to stand on (it regresses nothing). The
-arc from here is toward the tool the hypervisor was actually built for, then the
-governance that makes a growing toolset safe.
+`move` proved the tool substrate is safe to stand on (it regresses nothing). The next
+two steps — the tool the hypervisor was actually built for, and the governance that
+makes a growing toolset safe — have both since shipped; they are kept here because the
+reasoning is the point, not the checkbox.
 
-1. **`run_code` — the boxed tier** (next). A code/shell tool whose implementation
+1. **`run_code` — the boxed tier** (SHIPPED). A code/shell tool whose implementation
    runs *inside* the sandbox VM — no network, ephemeral, no host access. This is
    the dangerous verb the VM boundary exists for; `move` was the safe rehearsal.
-2. **The registry + greenlight/redlight governance.** A tool exists for a citizen
+2. **The registry + greenlight/redlight governance** (SHIPPED). A tool exists for a citizen
    only because it was registered and enabled. Gates bite globally, per-persona
    (the engineer gets `run_code`, the wordsmith gets none), per-room, or per-tier;
    redlight is a **kill-switch** the harness re-reads each turn — pull a misbehaving

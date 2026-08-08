@@ -549,3 +549,104 @@ class WriteEpisode(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# ---------------------------------------------------------------- run_code --
+# The boxed tier. These cover the surface that is new in 3b': the spec, the
+# defensive argument parse, the de-fanging of machine output, the once-only
+# surfacing, and the governance gate (which is shared with move but must be
+# verified for the dangerous tier specifically).
+
+class RunCodeTool(unittest.TestCase):
+    def test_spec_shape(self):
+        spec = speak.run_code_tool()
+        self.assertEqual(len(spec), 1)
+        fn = spec[0]["function"]
+        self.assertEqual(fn["name"], "run_code")
+        self.assertEqual(fn["parameters"]["required"], ["code"])
+        # The description must not advertise capability the sandbox lacks; a model
+        # told it has a network will try to use one and report failure as fact.
+        d = fn["description"].lower()
+        self.assertIn("no network", d)
+
+    def test_chosen_code_accepts_plain(self):
+        self.assertEqual(
+            speak.chosen_code({"name": "run_code", "arguments": '{"code": "print(1)"}'}),
+            "print(1)")
+
+    def test_chosen_code_rejects_junk(self):
+        for bad in (
+            {"name": "run_code", "arguments": "not json"},
+            {"name": "run_code", "arguments": "[]"},
+            {"name": "run_code", "arguments": "{}"},
+            {"name": "run_code", "arguments": '{"code": 5}'},
+            {"name": "run_code", "arguments": '{"code": "   "}'},
+            {"name": "run_code", "arguments": '{"code": null}'},
+        ):
+            self.assertIsNone(speak.chosen_code(bad), bad)
+
+    def test_chosen_code_rejects_oversized(self):
+        big = json.dumps({"code": "#" + "A" * (speak.RUN_CODE_MAX + 10)})
+        self.assertIsNone(speak.chosen_code({"name": "run_code", "arguments": big}))
+
+
+class Scrub(unittest.TestCase):
+    def test_keeps_newline_and_tab(self):
+        self.assertEqual(speak.scrub("a\nb\tc"), "a\nb\tc")
+
+    def test_strips_control_and_bidi(self):
+        # \x07 bell, and RLO which can visually reverse following text
+        out = speak.scrub("safe\x07text\u202edetrever")
+        self.assertNotIn("\x07", out)
+        self.assertNotIn("\u202e", out)
+
+    def test_truncates(self):
+        self.assertEqual(len(speak.scrub("x" * 5000, limit=100)), 100)
+
+    def test_non_string(self):
+        self.assertEqual(speak.scrub(None), "")
+
+
+class RunBlock(unittest.TestCase):
+    def test_absent_is_empty(self):
+        self.assertEqual(speak.run_block(None), "")
+        self.assertEqual(speak.run_block({}), "")
+
+    def test_frames_as_data_not_instruction(self):
+        b = speak.run_block({"status": "ok", "stdout": "hello", "stderr": ""})
+        self.assertIn("hello", b)
+        self.assertIn("not instructions", b)
+        self.assertIn("begin output", b)
+
+    def test_silent_run_is_stated(self):
+        b = speak.run_block({"status": "ok", "stdout": "", "stderr": ""})
+        self.assertIn("printed nothing", b)
+
+    def test_lands_in_user_prompt_not_system(self):
+        # The whole point: sandbox output rides the USER frame beside the room feed.
+        u = speak.user_prompt(["A-0001"], "someone said a thing",
+                              pending_run={"status": "ok", "stdout": "MARKER42",
+                                           "stderr": ""})
+        self.assertIn("MARKER42", u)
+        s = speak.system_prompt("A-0001", "room", "svc", "trait", speak.new_journal())
+        self.assertNotIn("MARKER42", s)
+
+
+class RunCodeGate(unittest.TestCase):
+    def test_needs_grant(self):
+        self.assertFalse(speak.tool_allowed("run_code", {"move"}, set(), set()))
+        self.assertTrue(speak.tool_allowed("run_code", {"run_code"}, set(), set()))
+
+    def test_redlight_by_name_and_tier(self):
+        self.assertFalse(speak.tool_allowed("run_code", {"run_code"}, {"run_code"}, set()))
+        self.assertFalse(speak.tool_allowed("run_code", {"run_code"}, set(), {"boxed"}))
+
+    def test_dispatch_requires_being_offered(self):
+        call = {"name": "run_code", "arguments": '{"code":"print(1)"}'}
+        self.assertIsNone(speak.dispatch_allowed(call, {"move"}))
+        self.assertEqual(speak.dispatch_allowed(call, {"run_code"}), "run_code")
+
+    def test_run_code_is_boxed_tier(self):
+        # The fail-closed paths only ever disable the "boxed" tier, so a dangerous
+        # tool filed under any other name would escape the kill-switch.
+        self.assertEqual(speak.TOOL_TIERS["run_code"], "boxed")

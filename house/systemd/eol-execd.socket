@@ -1,0 +1,8 @@
+[Unit]
+Description=EOL run_code broker socket (vsock :620)
+[Socket]
+# Root binds the privileged vsock port; the service inherits the fd and runs
+# unprivileged. This is the whole reason for socket activation here.
+ListenStream=vsock::620
+[Install]
+WantedBy=sockets.target
