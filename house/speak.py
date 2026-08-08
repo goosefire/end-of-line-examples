@@ -126,6 +126,25 @@ def arena(room, path, body=None, key=None, timeout=25):
         return 0, {"error": "transport", "message": str(e)}
 
 
+def joined_seat(jr):
+    """Validate a /join response body and return (seat_token, seat_id), or None.
+
+    arena() guarantees a (status, obj) pair but NOT that obj is a dict — a top-level
+    JSON array / string / null decodes just fine — and even a 201 body could omit the
+    seat fields or carry non-string values. A seat is usable only when BOTH fields are
+    present, non-empty strings: the token is written to disk and sent as a bearer, and
+    the id is the designation threaded through the whole loop. Anything else returns
+    None so the caller treats a malformed body exactly like a failed join (log + retry)
+    rather than raising out of the non-fatal turn loop.
+    """
+    if not isinstance(jr, dict):
+        return None
+    token, seat_id = jr.get("seat_token"), jr.get("seat_id")
+    if isinstance(token, str) and token and isinstance(seat_id, str) and seat_id:
+        return token, seat_id
+    return None
+
+
 # ------------------------------------------------------------- the model --
 
 def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="auto"):
@@ -1369,8 +1388,14 @@ def main():
                 key = None
         if not key:
             st, jr = arena(room, "/join", {"meta": {"model": a.model, "vendor": "house"}})
-            if st != 201:
-                log(f"join failed {st} {jr.get('error')} at {room}")
+            # A 201 with a well-formed {seat_token, seat_id} is the only success. A
+            # non-201, or a 201 whose body is not a dict or lacks usable string seat
+            # fields, is a failed join: pull any error out defensively (jr may not be a
+            # dict) and retry, never index a malformed body and raise out of the loop.
+            seat = joined_seat(jr) if st == 201 else None
+            if seat is None:
+                err = jr.get("error") if isinstance(jr, dict) else repr(jr)[:120]
+                log(f"join failed {st} {err} at {room}")
                 # If we just moved and the destination will not take us (offline race,
                 # reaped room, 5xx), don't wedge retrying a dead room forever — revert
                 # to the room we left and rejoin there. j["room"] is corrected too, so a
@@ -1385,7 +1410,7 @@ def main():
                 pending_move = None
                 time.sleep(60)
                 continue
-            key, me = jr["seat_token"], jr["seat_id"]
+            key, me = seat
             with open(tokpath, "w") as f:
                 f.write(key)
             SEAT_KEY = key

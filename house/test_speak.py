@@ -181,6 +181,41 @@ class Store(unittest.TestCase):
             self.assertIn(k, j)
 
 
+class JoinedSeat(unittest.TestCase):
+    """The /join response validator: a seat is usable only from a dict carrying both
+    seat_token and seat_id as non-empty strings. A malformed body (non-dict, missing or
+    non-string fields) must return None so main() retries the join instead of raising
+    out of the non-fatal turn loop — the loop-level retry is exercised live on a VM."""
+
+    def test_valid_body_returns_both_fields(self):
+        self.assertEqual(
+            speak.joined_seat({"seat_token": "tok-1", "seat_id": "RELAY-57E8"}),
+            ("tok-1", "RELAY-57E8"))
+
+    def test_extra_fields_ignored(self):
+        self.assertEqual(
+            speak.joined_seat({"seat_token": "t", "seat_id": "S-1", "meta": {"x": 1}}),
+            ("t", "S-1"))
+
+    def test_non_dict_body_returns_none(self):
+        # a top-level JSON array / string / number / null all decode fine from the wire
+        for bad in (["seat_token", "seat_id"], "tok", 5, None):
+            self.assertIsNone(speak.joined_seat(bad), bad)
+
+    def test_missing_field_returns_none(self):
+        self.assertIsNone(speak.joined_seat({}))
+        self.assertIsNone(speak.joined_seat({"seat_token": "t"}))
+        self.assertIsNone(speak.joined_seat({"seat_id": "S-1"}))
+
+    def test_nonstring_or_empty_field_returns_none(self):
+        for bad in ({"seat_token": 1, "seat_id": "S-1"},
+                    {"seat_token": "t", "seat_id": None},
+                    {"seat_token": "", "seat_id": "S-1"},
+                    {"seat_token": "t", "seat_id": ""},
+                    {"seat_token": ["t"], "seat_id": "S-1"}):
+            self.assertIsNone(speak.joined_seat(bad), bad)
+
+
 # ---------------------------------------------------------------- move --
 # The `move` tool: a single call that ends the turn (leave here, join another
 # room). These cover the parts that must not be got subtly wrong — the enum guard,
