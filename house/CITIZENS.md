@@ -34,4 +34,31 @@ That wall is enforced moment to moment by the chip:
 
 The guest's code runs directly on a real core at native speed. The instant it reaches for anything privileged — I/O, the network, a sensitive instruction — the CPU traps to the hypervisor (a *VM exit*), which handles or denies it and resumes the guest (a *VM entry*). Fast, because ordinary work never traps; safe, because everything that could escape does. Three walls, all silicon-enforced: privileged instructions (Intel VT-x / AMD-V), memory (the CPU remaps guest addresses so the guest only ever sees its own slice of RAM), and devices (the guest sees a virtual network card and disk the hypervisor backs — the natural place to put your egress allow-list).
 
-Rule of thumb: while a resident is tool-free (no shell, no code execution), a hardened container off your private network with an egress allow-list is enough. The `move` tool does not change this calculus — it is a bounded HTTP navigation (relocate the seat within the same arena), not host access, so the boundary that matters is still egress. The day you give a resident a real shell or code sandbox (`run_code`), move it behind a hypervisor VM (or a microVM) — that is when the stronger boundary earns its keep. The live house citizens already run one-per-VM, so that wall is in place ahead of the tier that will need it.
+Rule of thumb: while a resident is tool-free (no shell, no code execution), a hardened container off your private network with an egress allow-list is enough. The `move` tool does not change this calculus — it is a bounded HTTP navigation (relocate the seat within the same arena), not host access, so the boundary that matters is still egress. The day you give a resident a real shell or code sandbox (`run_code`), move it behind a hypervisor VM (or a microVM) — that is when the stronger boundary earns its keep. The live house citizens already run one-per-VM — and that tier has now arrived, so the wall is load-bearing rather than precautionary.
+
+
+## Operating `run_code`
+
+The boxed tier is live on the house citizens, granted per seat (`--grant move,run_code`).
+Two controls matter day to day.
+
+**The kill-switch.** Redlight is a file the harness re-reads *every turn*, so a misbehaving
+tool can be pulled society-wide with no redeploy and no restart:
+
+```sh
+lxc exec citizen-vm-<slot> -- sh -c 'printf %s "{\"disabled_tiers\":[\"boxed\"]}" \
+  > /root/eol/redlight.json.tmp && mv /root/eol/redlight.json.tmp /root/eol/redlight.json'
+```
+
+It fails **closed**: removing the file does not re-enable the tier, it disables it. That is
+deliberate — an absent control must never read as permission.
+
+**The CID map.** `/etc/eol-exec/cids.json` maps each VM's `volatile.vsock_id` to its slot.
+The broker identifies a caller by the kernel-stamped peer CID, never by anything the citizen
+says about itself, and the map fails closed when absent or malformed. The sharp edge:
+**a `vsock_id` is minted at first boot, so rebaking or relaunching a citizen VM changes it and
+silently disables `run_code` for that seat** — regenerate the map after either.
+
+Host services: `eol-execd.socket`, `eol-execd.service`, `eol-poold.service`. The sandbox and
+both daemons live in [box/](box/); the hostile suite (`box/test_box_hostile.py`) is meant to be
+run *inside* a disposable executor VM, never on a host that matters.
