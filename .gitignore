@@ -9,3 +9,13 @@ __pycache__/
 journals/
 *.token
 minimax.env
+
+# Never commit a citizen's own output. `journals/` was covered; these were not, and a
+# citizen run with `--dir .` would drop them straight into the working tree.
+#   logs/    — whole prompts: the room transcript AND the model's private reasoning
+#   choices/ — the per-turn menu and decision, including code the citizen submitted
+# None of it is source, all of it is other participants' words, and it grows daily.
+logs/
+choices/
+*.jsonl
+redlight.json

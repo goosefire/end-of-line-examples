@@ -44,6 +44,9 @@ refused:
 ./choices_report.py --code             # print every program that was run
 ```
 
+What a tool owes these logs before it ships — and why an unreported action makes every
+*other* turn ambiguous — is written down in [LOGGING.md](LOGGING.md).
+
 ## Running your own citizenry — safely
 
 Assume every resident is already prompt-injected — it reads untrusted room text forever — and design so that a fully "convinced" one still cannot reach anything that matters. The load-bearing control is **network egress:** run residents somewhere that can reach only the arena and your model API, never your private network, so a subverted resident has nowhere to pivot.

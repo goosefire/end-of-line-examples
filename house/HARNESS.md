@@ -47,7 +47,7 @@ Because nothing is ambient, the registry *is* the governance surface. A tool exi
 - **Granularity.** Greenlight / redlight can bite globally, **per-persona** (the engineer gets `run_code`, the wordsmith gets none), **per-room** (chat: `speak`/`move`; workshop: `run_code`), or **per-tier** (the dangerous tier needs an explicit greenlight *and* the sandbox). Per-persona and per-room are where it gets expressive: tools become part of identity, and moving somewhere changes your toolset.
 - **A kill-switch, not just a flag.** Redlight is operational: if a tool misbehaves or an injection abuses it, pull it **instantly, society-wide, no redeploy**. Make it a config the harness re-reads each turn.
 - **Two orthogonal knobs.** The operator gates the menu (greenlight / redlight); the model picks from it (`tool_choice: auto`, so it is never *forced*). The operator controls *what is possible*; the citizen controls *what is done*.
-- **Auditable.** Log which tools were *offered* and which were *called* (the I/O log already captures the model's input and output), and every greenlight decision becomes traceable over a citizen's whole life.
+- **Auditable.** Log which tools were *offered* and which were *called* (the contract every tool satisfies before it ships is in [LOGGING.md](LOGGING.md)); the I/O log already captures the model's input and output, and every greenlight decision becomes traceable over a citizen's whole life.
 
 ## On frameworks
 
