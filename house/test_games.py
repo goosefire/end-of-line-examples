@@ -178,6 +178,10 @@ eq("1x the board budget suits a non-reasoning answer", speak.BOARD_TOKENS, 1200)
 # Every string below is a REAL line a citizen posted at Dead Drop, or the shape
 # of one. The cards are the shapes the engine deals.
 HAND = ["slot 3 is red", "exactly 2 blue", "red before green", "slot 1 same slot 4"]
+# A seat's private knowledge is its cards AND the statements it has probed — the
+# answers it paid a turn for. Both come through `hand`; both are protected.
+PROBED = ["slot 1 is blue", "slot 2 is orange"]
+HAND = HAND + PROBED
 for line, card in [
     ('Probe "slot 3 is red" — my own card says slot 3 is red, so I know it is true.', "slot 3 is red"),
     ("My cards: slot 3 = red, and I hold two blues.", "slot 3 is red"),
@@ -196,9 +200,18 @@ for line in [
     "I probed and learned something useful. Your move.",
     "Declaring soon. Last chance to deal.",
     "yellow before purple",           # NOT in this hand — another player's business
-    "slot 2 is orange",               # not a card we hold
+    "green before purple",           # neither held nor probed
 ]:
     ok(f"1z allowed: {line[:44]!r}", speak.leaks_own_hand(line, HAND) is None, "wrongly blocked")
+
+# Real lines that got through the cards-only version — deductions bought with a
+# probe, which is the MORE valuable half to hand an opponent.
+for line, why in [
+    ("I know slot 1 is blue (forced), slot 2 is not blue (forbidden)", "a forced probe answer"),
+    ("Bookkeeping tally: slot 1 = red, slot 2 = red, slot 1 != slot 4", "a tally of deductions"),
+    ("slot 2 is orange came back open, so that tells me little", "an open probe answer"),
+]:
+    ok(f"1z1 blocked ({why})", speak.leaks_own_hand(line, HAND) is not None, line[:50])
 
 ok("1z2 nothing to leak with an empty hand", speak.leaks_own_hand("slot 3 is red", []) is None)
 ok("1z3 an empty line is not a leak", speak.leaks_own_hand("", HAND) is None)

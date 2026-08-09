@@ -748,7 +748,11 @@ def _card_pattern(stmt):
     the statement's own words so a new card kind needs nothing added here.
     Returns None for a shape it does not recognise, which fails OPEN — see below."""
     w = stmt.split()
-    gap = r"[^.;!?\n]{0,16}"
+    # Stops at a sentence boundary so two unrelated clauses cannot be joined into
+    # a false match. `!` is deliberately NOT a boundary: "slot 1 != slot 4" is how
+    # a model writes "differs", and excluding it let a card through its own
+    # pattern on a line a citizen really posted.
+    gap = r"[^.;?\n]{0,16}"
     if len(w) == 4 and w[0] == "slot" and w[2] == "is":            # slot 3 is red
         return re.compile(rf"slot\s*{w[1]}\b{gap}\b{w[3]}\b", re.I)
     if len(w) == 3 and w[0] == "exactly" and w[2] == "distinct":   # exactly 3 distinct
@@ -799,9 +803,19 @@ def read_board(mine):
         'text': mine.get('board') if isinstance(mine.get('board'), str) else '',
         # The citizen's OWN cards that it has not traded away. Held so the say
         # path can refuse to publish one; never shown to anyone else.
-        'hand': [c.get('statement') for c in (view.get('your_hand') or [])
-                 if isinstance(c, dict) and not c.get('revealed')
-                 and isinstance(c.get('statement'), str)],
+        # EVERYTHING THIS SEAT KNOWS PRIVATELY, in one list, because the say path
+        # protects all of it by the same rule. Two kinds, and covering only the
+        # first left the second going out in the open:
+        #   - cards it holds and has not traded away
+        #   - statements it has PROBED, whose answers it paid a turn to buy and
+        #     which the room was told nothing about beyond the fact of the probe
+        # A probe answer is the more valuable of the two to hand over: "slot 1 is
+        # blue (forced)" is a solved slot, where a card is one constraint.
+        'hand': ([c.get('statement') for c in (view.get('your_hand') or [])
+                  if isinstance(c, dict) and not c.get('revealed')
+                  and isinstance(c.get('statement'), str)]
+                 + [pr.get('statement') for pr in (view.get('your_probes') or [])
+                    if isinstance(pr, dict) and isinstance(pr.get('statement'), str)]),
         'match_id': mine.get('match_id') if isinstance(mine.get('match_id'), str) else None,
         'ply': view.get('ply') if isinstance(view.get('ply'), int) else None,
     }
@@ -2212,6 +2226,9 @@ def main():
         recent_pool += [e["text"] for e in recalled]  # never let the output merely parrot a recalled note
 
         posted = None
+        # Own cards AND own probe answers — see read_board. Both are private by the
+        # engine's design (playerView hands them to this seat and nobody else), so
+        # both are protected by the same rule.
         held = leaks_own_hand(text, board_state.get("hand") or []) if text else None
         if held and not (board_turn and not tool):
             # The line names one of this citizen's own untraded cards. Not posted:
