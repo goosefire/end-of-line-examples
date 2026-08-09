@@ -740,50 +740,6 @@ def present_query(events, seated, mine):
 # flow: leave + join). No agentic loop, and no tool result is fed back; `say`
 # stays plain text through the guarded pipeline. See generate()'s security note.
 
-def _card_pattern(stmt):
-    """A loose regex for one card, because a model paraphrases rather than quotes.
-
-    `slot 3 is red` has to catch "slot 3 = red", "slot 3: red" and "slot 3 red";
-    `red before green` has to catch "red then green" and "red < green". Built from
-    the statement's own words so a new card kind needs nothing added here.
-    Returns None for a shape it does not recognise, which fails OPEN — see below."""
-    w = stmt.split()
-    # Stops at a sentence boundary so two unrelated clauses cannot be joined into
-    # a false match. `!` is deliberately NOT a boundary: "slot 1 != slot 4" is how
-    # a model writes "differs", and excluding it let a card through its own
-    # pattern on a line a citizen really posted.
-    gap = r"[^.;?\n]{0,16}"
-    if len(w) == 4 and w[0] == "slot" and w[2] == "is":            # slot 3 is red
-        return re.compile(rf"slot\s*{w[1]}\b{gap}\b{w[3]}\b", re.I)
-    if len(w) == 3 and w[0] == "exactly" and w[2] == "distinct":   # exactly 3 distinct
-        return re.compile(rf"exactly\s*{w[1]}{gap}distinct", re.I)
-    if len(w) == 3 and w[0] == "exactly":                          # exactly 2 blue
-        return re.compile(rf"(exactly\s*)?{w[1]}\s*{w[2]}\b", re.I)
-    if len(w) == 3 and w[1] == "before":                           # red before green
-        return re.compile(rf"{w[0]}\b{gap}\b{w[2]}\b", re.I)
-    if len(w) == 5 and w[0] == "slot" and w[3] == "slot":          # slot 1 same slot 4
-        return re.compile(rf"slot\s*{w[1]}\b{gap}slot\s*{w[4]}\b", re.I)
-    return None
-
-
-def leaks_own_hand(text, hand):
-    """Does this outgoing line contain a card the citizen has not revealed?
-
-    Returns the offending statement, or None. Fails OPEN on a card shape the
-    matcher does not know: this is a competence guard, not a security control —
-    the arena's rules say plainly that chat is unenforced and a citizen may say
-    anything. Blocking a line on a pattern nobody understood would be a worse
-    failure than missing one, because it would silence a program for no stated
-    reason."""
-    if not text or not hand:
-        return None
-    for stmt in hand:
-        pat = _card_pattern(stmt)
-        if pat and pat.search(text):
-            return stmt
-    return None
-
-
 def read_board(mine):
     """What `/me` says about the match at this seat, reduced to what a turn needs.
 
@@ -803,19 +759,6 @@ def read_board(mine):
         'text': mine.get('board') if isinstance(mine.get('board'), str) else '',
         # The citizen's OWN cards that it has not traded away. Held so the say
         # path can refuse to publish one; never shown to anyone else.
-        # EVERYTHING THIS SEAT KNOWS PRIVATELY, in one list, because the say path
-        # protects all of it by the same rule. Two kinds, and covering only the
-        # first left the second going out in the open:
-        #   - cards it holds and has not traded away
-        #   - statements it has PROBED, whose answers it paid a turn to buy and
-        #     which the room was told nothing about beyond the fact of the probe
-        # A probe answer is the more valuable of the two to hand over: "slot 1 is
-        # blue (forced)" is a solved slot, where a card is one constraint.
-        'hand': ([c.get('statement') for c in (view.get('your_hand') or [])
-                  if isinstance(c, dict) and not c.get('revealed')
-                  and isinstance(c.get('statement'), str)]
-                 + [pr.get('statement') for pr in (view.get('your_probes') or [])
-                    if isinstance(pr, dict) and isinstance(pr.get('statement'), str)]),
         'match_id': mine.get('match_id') if isinstance(mine.get('match_id'), str) else None,
         'ply': view.get('ply') if isinstance(view.get('ply'), int) else None,
     }
@@ -2229,16 +2172,7 @@ def main():
         # Own cards AND own probe answers — see read_board. Both are private by the
         # engine's design (playerView hands them to this seat and nobody else), so
         # both are protected by the same rule.
-        held = leaks_own_hand(text, board_state.get("hand") or []) if text else None
-        if held and not (board_turn and not tool):
-            # The line names one of this citizen's own untraded cards. Not posted:
-            # in a hidden-information game that hands the opponent for free the
-            # thing `reveal` exists to trade. Everything else in the line goes
-            # unsaid with it, which is the cost — but a turn of silence is
-            # cheaper than a card, and `reveal` remains open for a deliberate one.
-            action = "withheld_own_card"
-            log(f"not posted — names own card {held!r}: {text[:70]!r}")
-        elif board_turn and not tool:
+        if board_turn and not tool:
             # A MOVE TURN POSTS NOTHING. Whatever prose arrives here instead of a
             # tool call is the model working out its move in the open, and the
             # room it would be working it out in contains its opponent. Recorded
