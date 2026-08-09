@@ -80,6 +80,25 @@ EPISODE_SRC_MAX = 30  # most raw lines fed to one episode call (also bounds a mi
 # not reclaim a seat, only ends a match. Enforced in code because the citizen that
 # would do it is the one whose judgement we already do not trust.
 BOARD_PATIENCE = 4
+# Completion budget. Reasoning tokens are charged against it, so this is really
+# a thinking allowance and it has to match the work.
+#
+# CHAT_TOKENS is what conversation was tuned to and is unchanged. BOARD_TOKENS is
+# for a turn spent on move at a live match, which is a different order of work:
+# 14 of 35 such turns produced nothing, every sampled one logged `lost` rather
+# than `deliberate` — the model reasoned and the answer was truncated away. The
+# same citizens pass deliberately in chat, so the position is the difference.
+# `cf_player.py` sends 6000 for Connect Four, the simplest board on the platform;
+# deduction games are heavier, so this sits above it.
+#
+# If `lost` turns persist at this budget the answer is NOT a bigger number —
+# Wordle already measured M3 exhausting 2,500, 4,000 and 6,000 alike on
+# constraint-heavy turns. It is thinking-off with propose-and-check.
+CHAT_TOKENS = 4000
+# A move is a short answer once the model is not reasoning aloud: Wordle sends 700
+# for a whole word with thinking off. Raising this instead of disabling thinking
+# was measured and failed — 23,632 bytes of reasoning, nothing posted, at 8000.
+BOARD_TOKENS = 900
 MOVE_COOLDOWN = 6     # turns to stay put after a move — no thrashing, and don't strip a room
 RUN_COOLDOWN = 3      # turns between run_code calls — a cadence limiter, not a boundary
 RUN_WALL = 10         # seconds the sandbox may run
@@ -158,7 +177,8 @@ def joined_seat(jr):
 
 # ------------------------------------------------------------- the model --
 
-def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="auto"):
+def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="auto",
+             max_tokens=CHAT_TOKENS, think=True):
     """
     One completion. Returns a 4-tuple: (posted_text, raw_content, error|None, tool),
     where `tool` is None unless the model asked to call one, in which case it is a
@@ -202,12 +222,16 @@ def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="
         # dropped turn: 7/14 lost at 2500, 0/12 at 4000 and at 6000, with average
         # completion tokens UNCHANGED (2008 / 1975 / 1838). The cap was clipping the
         # tail, not shortening the thinking — so this is headroom, not extra budget.
-        "max_tokens": 4000,
+        "max_tokens": max_tokens,
         "temperature": 1.0,
     }
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = tool_choice
+    if not think:
+        # M3 alone honours this; M2.7-highspeed accepts it and thinks anyway, so a
+        # citizen left on the default model still truncates at a board.
+        payload["thinking"] = {"type": "disabled"}
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
     r.add_header("content-type", "application/json")
     r.add_header("authorization", "Bearer " + api_key)
@@ -1854,7 +1878,17 @@ def main():
         usr_p = user_prompt(seated, transcript_of(state, me), recalled,
                             destinations=dests if tools else None,
                             pending_run=pending_run, board=board_state)
-        clean, raw_content, gen_err, tool = generate(api_key, a.model, sys_p, usr_p, tools=tools)
+        # AT A BOARD THE CITIZEN STOPS THINKING ALOUD AND ANSWERS. Reasoning is
+        # charged against the completion budget and this model will spend all of
+        # it: measured at 23,632 bytes of <think> and no move, which the room sees
+        # as a forfeit. A weaker move that arrives beats a better one that does
+        # not, because the turn has a clock on it. Chat is untouched — it has no
+        # clock, and thinking is what makes it worth reading.
+        at_board = bool(board_state.get("at_board"))
+        clean, raw_content, gen_err, tool = generate(
+            api_key, a.model, sys_p, usr_p, tools=tools,
+            max_tokens=BOARD_TOKENS if at_board else CHAT_TOKENS,
+            think=not at_board)
         raw = clean.strip().strip('"').strip()
         # Consume the arrival note only once the model has actually received it (a
         # successful completion — the request carried it). On an API error the note is
