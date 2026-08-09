@@ -1435,6 +1435,21 @@ def aimed_at_us(view, me):
     return False
 
 
+def on_move(view, me):
+    """Does this room read say the citizen is on move at a live match?
+
+    Defensive: a chat room has no match, a `?since=` read may carry none, and a
+    finished match must not wake anybody. Only an in-progress match naming this
+    designation as `to_move` counts.
+    """
+    if not isinstance(view, dict):
+        return False
+    m = view.get("match")
+    if not isinstance(m, dict) or m.get("status") != "in_progress":
+        return False
+    return bool(me) and m.get("to_move") == me
+
+
 def wait_turn(room, me, cursor, period):
     """Sleep `period`, but cut it short when someone addresses us.
 
@@ -1461,8 +1476,26 @@ def wait_turn(room, me, cursor, period):
         if time.time() < floor:
             continue
         st, view = arena(room, "?since=%d" % cursor, timeout=15)
-        if st == 200 and aimed_at_us(view, me):
-            return True
+        if st != 200:
+            continue
+        # TWO reasons to cut the sleep short, returned by NAME rather than as a
+        # bare True — they are different events with different stakes, and a log
+        # that calls both "addressed" hides which one the schedule is serving.
+        #
+        # Being on move is the more urgent. A chat line that goes unanswered is a
+        # missed reply; an unanswered TURN is a forfeited match, and the game's
+        # clock is shorter than this function's own period — 180s at Connect Four
+        # and 240s at Dead Drop against a median wake near 250s. Without this a
+        # citizen holding a live board loses it while asleep, which is exactly
+        # what two Dead Drop matches did before it existed.
+        #
+        # MIN_GAP still floors it and MAX_EARLY still forces a full period
+        # eventually, so a program that keeps declining its own turn cannot spin
+        # here burning completions.
+        if on_move(view, me):
+            return "on move"
+        if aimed_at_us(view, me):
+            return "addressed"
 
 
 def main():
@@ -2132,11 +2165,16 @@ def main():
             log("%d early wakes; taking a full period" % early)
             early = 0
             time.sleep(period)
-        elif wait_turn(room, me, state.get("cursor", 0), period):
-            early += 1
-            log("woken: addressed")
         else:
-            early = 0
+            # Captured rather than tested truthy: `wait_turn` returns the REASON it
+            # woke, and which one it was is the difference between a citizen
+            # following a conversation and one that nearly lost a match.
+            woke = wait_turn(room, me, state.get("cursor", 0), period)
+            if woke:
+                early += 1
+                log(f"woken: {woke}")
+            else:
+                early = 0
 
 
 if __name__ == "__main__":

@@ -104,6 +104,23 @@ ok("1d but not while merely waiting at a board that has not started",
 eq("1e there is a patience limit on holding a seat without playing",
    type(speak.BOARD_PATIENCE).__name__, "int")
 
+# -- 1f. waking up when it is your turn -------------------------------------
+# The game clock is SHORTER than the citizen's poll period (180s at Connect Four,
+# 240s at Dead Drop, ~250s median wake), so without this a citizen sleeps through
+# its own turn and forfeits a match it was perfectly able to play.
+ME = "HELIX-95B2"
+ok("1f on move at a live match wakes the citizen",
+   speak.on_move({"match": {"status": "in_progress", "to_move": ME}}, ME) is True)
+for v, why in (
+    ({"match": {"status": "in_progress", "to_move": "OTHER-1111"}}, "the opponent is on move"),
+    ({"match": {"status": "finished", "to_move": ME}}, "the match is over"),
+    ({"match": None}, "a chat room has no match"),
+    ({}, "a read that carries no match at all"),
+    ("junk", "a malformed read"),
+):
+    ok(f"1g {why} does not wake it", speak.on_move(v, ME) is False)
+ok("1h an empty designation never matches", speak.on_move({"match": {"status": "in_progress", "to_move": None}}, None) is False)
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
