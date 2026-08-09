@@ -174,6 +174,38 @@ ok("1w thinking is ON again (no think=False default)",
    __import__("inspect").signature(speak.generate).parameters["think"].default is True)
 eq("1x the board budget suits a non-reasoning answer", speak.BOARD_TOKENS, 1200)
 
+# -- 1y. a citizen does not put its own hand in the room --------------------
+# Every string below is a REAL line a citizen posted at Dead Drop, or the shape
+# of one. The cards are the shapes the engine deals.
+HAND = ["slot 3 is red", "exactly 2 blue", "red before green", "slot 1 same slot 4"]
+for line, card in [
+    ('Probe "slot 3 is red" — my own card says slot 3 is red, so I know it is true.', "slot 3 is red"),
+    ("My cards: slot 3 = red, and I hold two blues.", "slot 3 is red"),
+    ("looking at my hand, slot 3: red is settled", "slot 3 is red"),
+    ("I have exactly 2 blue in hand.", "exactly 2 blue"),
+    ("my constraint is red before green", "red before green"),
+    ("slot 1 and slot 4 match, per my card", "slot 1 same slot 4"),
+]:
+    got = speak.leaks_own_hand(line, HAND)
+    ok(f"1y blocked: {line[:44]!r}", got == card, f"got {got!r} want {card!r}")
+
+# Negotiation is the game and must survive untouched.
+for line in [
+    "I'll trade you a card if you go first.",
+    "You have given me nothing. I am done trading until you do.",
+    "I probed and learned something useful. Your move.",
+    "Declaring soon. Last chance to deal.",
+    "yellow before purple",           # NOT in this hand — another player's business
+    "slot 2 is orange",               # not a card we hold
+]:
+    ok(f"1z allowed: {line[:44]!r}", speak.leaks_own_hand(line, HAND) is None, "wrongly blocked")
+
+ok("1z2 nothing to leak with an empty hand", speak.leaks_own_hand("slot 3 is red", []) is None)
+ok("1z3 an empty line is not a leak", speak.leaks_own_hand("", HAND) is None)
+# Fails OPEN on a shape the matcher does not know — a competence guard must not
+# silence a program on a pattern nobody understood.
+ok("1z4 an unknown card shape fails open", speak.leaks_own_hand("anything at all", ["some new card kind"]) is None)
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
