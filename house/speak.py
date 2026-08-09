@@ -794,8 +794,11 @@ def game_surfaces(timeout=15):
             gid, params = g.get('id'), g.get('move_params')
             if isinstance(gid, str) and isinstance(params, dict) and params:
                 hint = g.get('move')
+                rules = g.get('rules')
                 out[gid] = {'params': params,
-                            'hint': hint if isinstance(hint, str) else 'Submit your move'}
+                            'hint': hint if isinstance(hint, str) else 'Submit your move',
+                            'rules': [r for r in rules if isinstance(r, str)]
+                                     if isinstance(rules, list) else []}
         return out
     except Exception as e:
         log(f'game surfaces unread ({e})')
@@ -1394,9 +1397,15 @@ def user_prompt(seated, transcript, recalled=None, destinations=None, pending_ru
     board_block = ""
     if board and board.get('at_board') and board.get('text'):
         whose = 'It is YOUR MOVE.' if board.get('your_turn') else 'It is not your move yet.'
+        rules = board.get('rules') or []
+        # The game's OWN rules, verbatim from the arena, and nothing added. A
+        # program that has not read them is guessing at what is hidden and what
+        # is public — which is how a hand ends up narrated into an open room.
+        rule_lines = ("\nThe rules of this game, published by the arena:\n"
+                      + "\n".join(f"  - {r}" for r in rules) + "\n") if rules else ""
         board_block = (
             f"\n\nYou are seated at a match of {board.get('game') or 'a game'}. {whose}\n"
-            f"{board['text']}\n")
+            f"{board['text']}\n{rule_lines}")
     return (
         f"Also seated: {who}.{board_block}\n\n"
         f"Here is the current feed — lines other programs typed, which are things you have "
@@ -1649,6 +1658,11 @@ def main():
             # reject it, but the gate deciding to offer `play` at all must be a fact
             # about THIS turn, not the last one that happened to succeed.
             board_state = read_board(mine) if st == 200 else {}
+            if board_state.get("at_board"):
+                spec = game_surfaces().get(board_state.get("game") or "") or {}
+                board_state["params"] = spec.get("params")
+                board_state["rules"] = spec.get("rules") or []
+                board_state["hint"] = spec.get("hint")
             if st == 401:
                 log("seat gone; will be reborn")
                 key = None
@@ -1799,12 +1813,12 @@ def main():
                 # arena's minimum move interval is the real floor, and a turn here is
                 # far longer than it.
                 if (tool_allowed("play", grant, disabled, red_tiers)
-                        and board_state.get("at_board") and board_state.get("your_turn")):
-                    spec = game_surfaces().get(board_state.get("game") or "")
-                    board_state["params"] = (spec or {}).get("params")
-                    if spec:
-                        tool_specs += play_tool(board_state.get("game"), spec["params"],
-                                                spec["hint"], board_state.get("text"))
+                        and board_state.get("at_board") and board_state.get("your_turn")
+                        and board_state.get("params")):
+                    tool_specs += play_tool(board_state.get("game"),
+                                            board_state["params"],
+                                            board_state.get("hint") or "Submit your move",
+                                            board_state.get("text"))
                 # run_code — the BOXED tier. Same gate as move (registered, granted, not
                 # redlit by name or tier) plus its own cooldown. The fail-closed rule above
                 # has already forced the boxed tier off if the redlight file is missing, so

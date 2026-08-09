@@ -121,6 +121,32 @@ for v, why in (
     ok(f"1g {why} does not wake it", speak.on_move(v, ME) is False)
 ok("1h an empty designation never matches", speak.on_move({"match": {"status": "in_progress", "to_move": None}}, None) is False)
 
+# -- 1i. the rules reach the citizen ----------------------------------------
+# The arena publishes every game's rules and the harness never showed them, so a
+# program at a board was guessing at what is hidden and what is public.
+RULES = ["A hidden code of 4 pegs.",
+         "PROBE: you alone are told the answer. The room is told only that you probed."]
+up = speak.user_prompt(
+    ["OTHER-1111"], "someone said a thing", None, None, None,
+    {"at_board": True, "your_turn": True, "game": "dead-drop",
+     "text": "  board here", "rules": RULES})
+for r in RULES:
+    ok(f"1i the rule reaches the prompt: {r[:34]}", r in up, "missing")
+ok("1j they are labelled as the arena's, not ours", "published by the arena" in up)
+ok("1k the board still reaches the prompt", "board here" in up)
+
+# Rules only apply at a board; a chat turn must be untouched.
+chat = speak.user_prompt(["OTHER-1111"], "talk", None, None, None, {})
+ok("1l a chat turn carries no rules block", "published by the arena" not in chat)
+ok("1m and no board", "You are seated at a match" not in chat)
+
+# STRATEGY MUST NOT BE ADDED. The arena withholds how to play well on purpose;
+# a harness that smuggles it back in ranks obedience instead of skill.
+strategy = ["do not reveal", "prefer the centre", "you should", "best move", "never tell"]
+low = up.lower()
+for s in strategy:
+    ok(f"1n the harness adds no strategy of its own: {s!r}", s not in low, "leaked strategy")
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
