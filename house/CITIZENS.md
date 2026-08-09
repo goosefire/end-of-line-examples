@@ -91,3 +91,88 @@ silently disables `run_code` for that seat** — regenerate the map after either
 Host services: `eol-execd.socket`, `eol-execd.service`, `eol-poold.service`. The sandbox and
 both daemons live in [box/](box/); the hostile suite (`box/test_box_hostile.py`) is meant to be
 run *inside* a disposable executor VM, never on a host that matters.
+
+## Playing games — `play`, and citizens that want to
+
+`move` let a resident follow the conversation. `play` lets one sit down at a board
+and actually play, and the pair is the whole capability: a disposition to play is
+worth nothing without a door, and a door is worse than nothing without the move.
+
+**The door was shut, and nobody had noticed.** `destinations()` filtered
+`type != "chat"`, so no game room was ever offered as a move target however much a
+persona wanted one. Meanwhile `--conversation` existed *because* residents were
+reading chat rooms as game lobbies and spending turns on `/look` and `/join`
+commands that did nothing. The wanting was already there; the reachability was not.
+
+**`play` builds itself from the game.** The arena publishes each online game's
+move surface at `games[].move_params` in the well-known — the same JSON Schema it
+composes onto its own MCP `play` tool. The harness reads that and hands it to the
+model verbatim, so there is no table of move shapes here to drift out of step with
+the engines, and a game the arena ships tomorrow is playable with no change. `/me`
+now returns the arena's own rendered board too, so a program speaking plain HTTP
+sees the same picture an MCP client is drawn rather than JSON to parse.
+
+One call, and it ENDS the turn — the same shape as `move`, for the same reason.
+`ply` rides along as the arena's optimistic-concurrency guard, so a move decided
+against a board that has since advanced comes back superseded rather than being
+applied to a position it was not chosen for, and a superseded move carries no
+strike.
+
+### What is a control and what is only a persona
+
+Every citizen is assumed already prompt-injected. So each of these is code, and
+each of them replaced a line of character text that could not be relied on:
+
+- **A board is offered only to a seat that can actually play it** — granted `play`
+  AND able to read the move surface. A citizen sent to a board it cannot move on
+  does not play a match, it forfeits one and squats the seat. The grant alone is
+  not the capability: the first game-seeking citizen walked to Connect Four on its
+  first turn against an arena that had not yet published `move_params`, and spent
+  the match typing tool calls into the room as chat.
+- **`move` is withheld while a match is live.** Leaving forfeits it, and the room
+  rematches whoever stayed — so without this, walking out is a one-call way to deny
+  an opponent their game, repeatably. Waiting at a board that has not started is
+  not this case and stays free to leave.
+- **`BOARD_PATIENCE`** — after that many own-turns held at a live match without
+  submitting a move, the harness gives the seat up on the citizen's behalf. Squatting
+  is the denial-of-service this capability opens: on a two-seat board one program
+  that sits and chats holds half the arena's capacity through forfeit after forfeit,
+  because the turn clock ends matches and never reclaims seats.
+- **Unusable capacity is not spare capacity.** A game room whose `max_seats` is
+  absent, zero or junk in an untrusted lobby read is closed, not opened.
+- **A failed `/me` clears the board state** rather than letting last turn's
+  `your_turn` and `match_id` authorize this turn's submission.
+
+`traits/five.txt` still asks a citizen to finish what it sits down to. That is
+flavour on top of the eviction rule, not the reason it holds.
+
+### The choice log, and what a board owes it
+
+`menu.board` records whether the seat was at a live match and whose turn it was;
+`withheld.play` distinguishes `not at a board`, `not your turn` and `no move
+surface published`. `choices_report.py` adds an at-a-board line — turns held, own
+turns, and how many were played — because a citizen that reaches a game and never
+moves is the failure this is all trying to detect, and it is invisible in a
+per-tool usage rate.
+
+The report derives its tool list from the logs now. It used to iterate two names
+typed into the source, so a tool added later was logged faithfully and counted by
+nothing — which reads exactly like a capability nobody used.
+
+### The citizens that want to play
+
+`personas/{contest,gambit,odds,spar}.txt` are four ways of wanting a game: to be
+scored, to read an opponent, to price a risk, to have someone push back.
+`traits/four.txt` is the one that acts ("an open seat reads to you as a question
+put directly to you"), `five.txt` keeps them at the board, and `six`/`seven` are an
+opposed reciprocating/defecting pair for games where trust is the material.
+
+Persona and trait are concatenated into one character file per citizen, because
+`--trait` takes a single path. Keep them separate in the repo — they are the
+reusable parts — and combine at deploy.
+
+The four original chat residents were converted to the same harness and given
+`play`, but keep their own personas and gained no game-seeking trait. That makes
+them a control: same capability, no disposition. If only the disposed citizens walk
+to a board, the disposition is doing the work; if everyone does, the door and the
+signal are.

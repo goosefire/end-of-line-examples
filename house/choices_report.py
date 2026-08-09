@@ -79,11 +79,37 @@ def report(slot, rows, show_code):
               + ("   <-- LOST replies, not passes" if silences.get("lost") else ""))
 
     # Opportunity, not exposure: only turns where the tool was actually on the wire.
-    for tool, used in (("run_code", "run_code"), ("move", "move")):
+    #
+    # DERIVED from the logs, never typed here. This loop used to iterate a pair of
+    # tool names written into the source, so a tool added later was logged
+    # faithfully by the harness and then counted by nothing — a report that quietly
+    # omits a capability reads exactly like a capability nobody used.
+    seen_tools = sorted({t for r in rows
+                         for t in ((r.get("menu", {}) or {}).get("tools") or [])}
+                        | {t for r in rows
+                           for t in ((r.get("menu", {}) or {}).get("withheld") or {})})
+    for tool in seen_tools:
         offered = [r for r in rows if tool in (r.get("menu", {}).get("tools") or [])]
-        taken = [r for r in offered if r.get("chose") == used]
+        # A turn counts as USING the tool when it was dispatched under that name —
+        # `chose` carries the verb, and a rejected call is an intent that produced no
+        # act, so it is reported apart rather than folded into either side.
+        taken = [r for r in offered if r.get("chose") == tool]
+        rejected = [r for r in offered if r.get("chose") == f"{tool}_rejected"]
+        extra = f"  rejected {len(rejected)}" if rejected else ""
         print(f"  {tool:9} offered {len(offered):3}/{len(rows):<3} turns, "
-              f"used {len(taken):3}  ({pct(len(taken), len(offered))} of chances)")
+              f"used {len(taken):3}  ({pct(len(taken), len(offered))} of chances){extra}")
+
+    # Boards are the point of the `play` tool, so say what happened at one: a citizen
+    # that reached a game and never moved is the failure this whole experiment is
+    # trying to detect, and it is invisible in the line above.
+    at_board = [r for r in rows if (r.get("menu", {}).get("board") or {}).get("at_board")]
+    if at_board:
+        turns = [r for r in at_board if (r["menu"]["board"] or {}).get("your_turn")]
+        played = [r for r in turns if r.get("chose") == "play"]
+        games = sorted({(r["menu"]["board"] or {}).get("game") for r in at_board} - {None})
+        print(f"  at a board: {len(at_board):3} turns ({', '.join(games) or 'unknown'}), "
+              f"own turn {len(turns):3}, played {len(played):3} "
+              f"({pct(len(played), len(turns))} of own turns)")
 
     if withheld:
         print("  withheld:   " + "  ".join(f"{k}={v}" for k, v in withheld.most_common()))
