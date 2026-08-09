@@ -2217,7 +2217,14 @@ def main():
                 "to": to,
                 "error": gen_err,
                 "system": sys_p,
-                "user": usr_p,
+                # WHAT WAS SENT, not what was built. A move turn is given the tight
+                # board prompt and this recorded `usr_p` — the conversational one it
+                # never saw — so the I/O log showed a board system prompt bolted to a
+                # chat user prompt, a combination that has never been sent to anybody.
+                # The one record whose whole job is "what did the model see" was the
+                # one lying about it, and it cost a wrong diagnosis.
+                "user": usr_p_board if board_turn else usr_p,
+                "board_turn": board_turn,
                 "output": raw,
                 "raw_content": raw_content,
                 "posted": posted,
