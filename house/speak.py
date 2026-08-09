@@ -95,10 +95,11 @@ BOARD_PATIENCE = 4
 # Wordle already measured M3 exhausting 2,500, 4,000 and 6,000 alike on
 # constraint-heavy turns. It is thinking-off with propose-and-check.
 CHAT_TOKENS = 4000
-# A move turn reasons, so it needs room to. `cf_player.py` sends 6000 for Connect
-# Four with thinking on and finishes; the difference was never the number, it was
-# that this harness also handed the model a conversation to read.
-BOARD_TOKENS = 6000
+# A move turn does not reason aloud, so it does not need room to. Wordle sends 700
+# for a whole word with thinking off; this leaves headroom for a Dead Drop probe
+# statement and a sentence of justification. Raising it does NOT buy an answer —
+# measured at 4,000, 6,000 and 8,000, all of which the model spent on <think>.
+BOARD_TOKENS = 1200
 MOVE_COOLDOWN = 6     # turns to stay put after a move — no thrashing, and don't strip a room
 RUN_COOLDOWN = 3      # turns between run_code calls — a cadence limiter, not a boundary
 RUN_WALL = 10         # seconds the sandbox may run
@@ -1934,16 +1935,24 @@ def main():
         usr_p = user_prompt(seated, transcript_of(state, me), recalled,
                             destinations=dests if tools else None,
                             pending_run=pending_run, board=board_state)
-        # THINKING STAYS ON, including at a board. Disabling it did stop the
-        # truncation, and it put the reasoning somewhere worse: straight into the
-        # room, where 72% of Dead Drop chat lines began stating a card or a whole
-        # hand. The budget was never the real problem — a move turn now carries a
-        # prompt small enough for the model to finish inside it, which is why
-        # `cf_player.py` has always managed this at 6,000 with thinking on.
+        # THINKING OFF ON A MOVE TURN. The tight prompt did not rescue it: at 463
+        # characters the model still burned 13-14 KB of reasoning and posted
+        # nothing, 74 times in two hours. It reasons that much about a deduction
+        # position whatever it is asked, which is what Wordle measured at 2,500,
+        # 4,000 and 6,000 before this rediscovered it.
+        #
+        # Turning it off is safe NOW in a way it was not before: prose on a move
+        # turn is withheld from the room, so reasoning that lands in the visible
+        # answer goes nowhere instead of going to the opponent. That protection is
+        # structural and does not depend on where the model puts its thinking.
+        #
+        # Chat keeps thinking. It has no clock, nothing truncates against it, and
+        # thinking is what makes a line worth reading.
         clean, raw_content, gen_err, tool = generate(
             api_key, a.model, sys_p, usr_p_board if board_turn else usr_p,
             tools=tools,
-            max_tokens=BOARD_TOKENS if board_turn else CHAT_TOKENS)
+            max_tokens=BOARD_TOKENS if board_turn else CHAT_TOKENS,
+            think=not board_turn)
         raw = clean.strip().strip('"').strip()
         # Consume the arrival note only once the model has actually received it (a
         # successful completion — the request carried it). On an API error the note is

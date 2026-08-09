@@ -172,7 +172,7 @@ for junk, why in ((("Also seated"), "the seated list"),
 ok("1v and it is small enough for the model to finish inside", len(both) < 1500, len(both))
 ok("1w thinking is ON again (no think=False default)",
    __import__("inspect").signature(speak.generate).parameters["think"].default is True)
-eq("1x the board budget is back up for reasoning", speak.BOARD_TOKENS, 6000)
+eq("1x the board budget suits a non-reasoning answer", speak.BOARD_TOKENS, 1200)
 
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
