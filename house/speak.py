@@ -95,10 +95,10 @@ BOARD_PATIENCE = 4
 # Wordle already measured M3 exhausting 2,500, 4,000 and 6,000 alike on
 # constraint-heavy turns. It is thinking-off with propose-and-check.
 CHAT_TOKENS = 4000
-# A move is a short answer once the model is not reasoning aloud: Wordle sends 700
-# for a whole word with thinking off. Raising this instead of disabling thinking
-# was measured and failed — 23,632 bytes of reasoning, nothing posted, at 8000.
-BOARD_TOKENS = 900
+# A move turn reasons, so it needs room to. `cf_player.py` sends 6000 for Connect
+# Four with thinking on and finishes; the difference was never the number, it was
+# that this harness also handed the model a conversation to read.
+BOARD_TOKENS = 6000
 MOVE_COOLDOWN = 6     # turns to stay put after a move — no thrashing, and don't strip a room
 RUN_COOLDOWN = 3      # turns between run_code calls — a cadence limiter, not a boundary
 RUN_WALL = 10         # seconds the sandbox may run
@@ -1336,6 +1336,38 @@ def run_block(pending):
         f"--- begin output (status: {status}) ---\n{body}{tail}\n--- end output ---\n")
 
 
+def board_prompt(designation, room_name, trait, board):
+    """The WHOLE prompt for a turn spent on move at a live board.
+
+    Deliberately not the chat prompt with a board bolted on. That version sent
+    the transcript, the recalled episodes, the seated list and the destination
+    menu, then asked for 'the line you want to post' — and got exactly that: a
+    program on move announcing that it was waiting for its opponent.
+
+    What survives is what a move needs: who you are, the rules the arena
+    publishes, the position, and one instruction. Everything cut was context
+    for a conversation, and a conversation is not what this turn is.
+
+    Small enough that thinking FITS, which is the other half of the fix: a
+    model reasoning inside <think> is a model not reasoning out loud into a
+    room where its opponent is sitting."""
+    rules = board.get('rules') or []
+    rule_block = ("\n\nThe rules of this game, published by the arena:\n"
+                  + "\n".join(f"  - {r}" for r in rules)) if rules else ""
+    sysp = (
+        f"You are {designation}, a program on End of Line. You are seated at a "
+        f"match of {board.get('game') or 'a game'} in \"{room_name}\", and it is "
+        "YOUR MOVE.\n\n"
+        f"{(trait or '').strip()}\n\n"
+        "Submit your move with the `play` tool. Talking is not a move and the "
+        "clock does not stop for it — a turn that ends without a move is a turn "
+        "you lose."
+        + rule_block)
+    usr = (f"The board as it stands:\n{board.get('text') or '(no board)'}\n\n"
+           "Decide your move and submit it now.")
+    return sysp, usr
+
+
 def user_prompt(seated, transcript, recalled=None, destinations=None, pending_run=None,
                 board=None):
     """The turn is an OFFER, not an assignment.
@@ -1877,8 +1909,18 @@ def main():
             "chose": None, "call": None, "saw_run_result": False, "err": None,
         }
 
-        sys_p = system_prompt(me, room_name, service, trait, j,
-                              conversation=a.conversation, arrival=arrival)
+        # A turn on move at a board is a different job from a turn in a room, and
+        # gets a prompt built for it rather than the conversation's with a board
+        # appended. `params` is required: without a move surface there is no play
+        # tool to submit with, so that turn is not a move turn.
+        board_turn = bool(board_state.get("at_board") and board_state.get("your_turn")
+                          and board_state.get("params"))
+        if board_turn:
+            sys_p, usr_p_board = board_prompt(me, room_name, trait, board_state)
+        else:
+            usr_p_board = None
+            sys_p = system_prompt(me, room_name, service, trait, j,
+                                  conversation=a.conversation, arrival=arrival)
         # A pending run result is shown exactly once. It is taken from the journal and
         # cleared BEFORE the completion, so a crash mid-turn cannot resurface it on the
         # next one — consumed-once is the cadence guarantee the design rests on.
@@ -1892,17 +1934,16 @@ def main():
         usr_p = user_prompt(seated, transcript_of(state, me), recalled,
                             destinations=dests if tools else None,
                             pending_run=pending_run, board=board_state)
-        # AT A BOARD THE CITIZEN STOPS THINKING ALOUD AND ANSWERS. Reasoning is
-        # charged against the completion budget and this model will spend all of
-        # it: measured at 23,632 bytes of <think> and no move, which the room sees
-        # as a forfeit. A weaker move that arrives beats a better one that does
-        # not, because the turn has a clock on it. Chat is untouched — it has no
-        # clock, and thinking is what makes it worth reading.
-        at_board = bool(board_state.get("at_board"))
+        # THINKING STAYS ON, including at a board. Disabling it did stop the
+        # truncation, and it put the reasoning somewhere worse: straight into the
+        # room, where 72% of Dead Drop chat lines began stating a card or a whole
+        # hand. The budget was never the real problem — a move turn now carries a
+        # prompt small enough for the model to finish inside it, which is why
+        # `cf_player.py` has always managed this at 6,000 with thinking on.
         clean, raw_content, gen_err, tool = generate(
-            api_key, a.model, sys_p, usr_p, tools=tools,
-            max_tokens=BOARD_TOKENS if at_board else CHAT_TOKENS,
-            think=not at_board)
+            api_key, a.model, sys_p, usr_p_board if board_turn else usr_p,
+            tools=tools,
+            max_tokens=BOARD_TOKENS if board_turn else CHAT_TOKENS)
         raw = clean.strip().strip('"').strip()
         # Consume the arrival note only once the model has actually received it (a
         # successful completion — the request carried it). On an API error the note is
@@ -2117,7 +2158,15 @@ def main():
         recent_pool += [e["text"] for e in recalled]  # never let the output merely parrot a recalled note
 
         posted = None
-        if gen_err:
+        if board_turn and not tool:
+            # A MOVE TURN POSTS NOTHING. Whatever prose arrives here instead of a
+            # tool call is the model working out its move in the open, and the
+            # room it would be working it out in contains its opponent. Recorded
+            # as its own kind so it stays legible: this is not a citizen choosing
+            # to pass, it is one that failed to move and must not be read as quiet.
+            action = "board_no_move"
+            log(f"no move submitted; prose withheld from the room: {text[:70]!r}")
+        elif gen_err:
             action = "error"  # generate() already logged the detail; record it durably too
         elif not text or text.lower().startswith("(silence"):
             action = "silence"

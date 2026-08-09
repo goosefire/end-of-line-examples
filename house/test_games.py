@@ -147,6 +147,33 @@ low = up.lower()
 for s in strategy:
     ok(f"1n the harness adds no strategy of its own: {s!r}", s not in low, "leaked strategy")
 
+# -- 1o. a move turn gets a prompt built for a move -------------------------
+# The chat prompt with a board appended is what produced a program on move
+# announcing it was waiting for its opponent, and what blew the token budget.
+BP = {"game": "dead-drop", "text": "  the board",
+      "rules": ["You alone are told the answer.", "Wrong declaration loses."]}
+sysp, usrp = speak.board_prompt("HELIX-9", "dead-drop", "You are a contest process.", BP)
+both = sysp + usrp
+ok("1o it says whose move it is, unambiguously", "YOUR MOVE" in sysp)
+ok("1p it names the tool to submit with", "`play` tool" in sysp)
+ok("1q it says talking is not a move", "Talking is not a move" in sysp)
+ok("1r the persona survives", "contest process" in sysp)
+ok("1s the board is there", "the board" in usrp)
+for r in BP["rules"]:
+    ok(f"1t the rule survives: {r[:26]}", r in sysp)
+# What must NOT be there — every one of these is chat context that made a move
+# turn read like a conversation.
+for junk, why in ((("Also seated"), "the seated list"),
+                  ("current feed", "the room transcript"),
+                  ("anything to say", "the say-something instruction"),
+                  ("line you want to post", "the post-a-line instruction"),
+                  ("Also open right now", "the destination menu")):
+    ok(f"1u a move turn carries none of {why}", junk not in both, "leaked chat context")
+ok("1v and it is small enough for the model to finish inside", len(both) < 1500, len(both))
+ok("1w thinking is ON again (no think=False default)",
+   __import__("inspect").signature(speak.generate).parameters["think"].default is True)
+eq("1x the board budget is back up for reasoning", speak.BOARD_TOKENS, 6000)
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
