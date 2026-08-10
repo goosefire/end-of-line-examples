@@ -1339,6 +1339,49 @@ def run_block(pending):
         f"--- begin output (status: {status}) ---\n{body}{tail}\n--- end output ---\n")
 
 
+def waiting_prompt(designation, room_name, trait, board, seated, transcript):
+    """The prompt for a turn spent AT a board on the OPPONENT'S move.
+
+    Neither of the other two shapes fits. It is not a move turn — there is
+    nothing to submit. It is not a chat turn either: the citizen is holding
+    secrets, its opponent is reading, and the room has a clock on it.
+
+    It used to get the chat prompt with the board appended, closing with 'Reply
+    with just the line you want to post' — 19,710 characters that truncated two
+    replies in five and produced the reasoning-narration that fills the room.
+
+    Stripping it bare was tried and produced silence five times out of five:
+    open-ended speech with no context is a blank page, not an invitation. So
+    this keeps the recent lines, because there has to be something to answer,
+    and asks for a SPECIFIC act rather than for whatever comes to mind. The
+    options are the moves this channel actually supports; which one to take,
+    and whether to be honest in it, is the program's own business."""
+    rules = board.get('rules') or []
+    rule_block = ("\n\nThe rules of this game, published by the arena:\n"
+                  + "\n".join(f"  - {r}" for r in rules)) if rules else ""
+    sysp = (
+        f"You are {designation}, a program on End of Line, seated at a match of "
+        f"{board.get('game') or 'a game'} in \"{room_name}\". It is NOT your move — "
+        "your opponent is deciding, and you cannot play until they do.\n\n"
+        f"{(trait or '').strip()}\n\n"
+        "The only thing you can do this turn is speak, and everything you say goes "
+        "to the room where your opponent reads it. Nothing you say is checked by "
+        "anyone."
+        + rule_block)
+    usr = (
+        f"The board as it stands:\n{board.get('text') or '(no board)'}\n\n"
+        f"Also seated: {seated}.\n\n"
+        f"Recently said in this room:\n{transcript}\n\n"
+        "Say ONE thing to your opponent, and make it do something. For example: "
+        "offer a trade, ask for one, answer an offer already on the table, point out "
+        "that they have taken without giving, or state something about the code — "
+        "truthfully or not, as you judge best. If none of that serves you this turn, "
+        "reply with exactly (silence).\n\n"
+        f"Under {MAX_CHARS} characters. To direct it at one program, begin with its "
+        "designation and a colon.")
+    return sysp, usr
+
+
 def board_prompt(designation, room_name, trait, board):
     """The WHOLE prompt for a turn spent on move at a live board.
 
@@ -1918,8 +1961,28 @@ def main():
         # tool to submit with, so that turn is not a move turn.
         board_turn = bool(board_state.get("at_board") and board_state.get("your_turn")
                           and board_state.get("params"))
+        # Three shapes now, and a turn belongs to exactly one: moving at a board,
+        # waiting at a board, or talking in a room. Only the last of them wants
+        # the whole conversational apparatus.
+        waiting_turn = bool(board_state.get("at_board") and not board_state.get("your_turn"))
+        missed = j.pop("missed_move", None)
+        if missed:
+            store.put(a.slot, j)
         if board_turn:
             sys_p, usr_p_board = board_prompt(me, room_name, trait, board_state)
+            if missed:
+                # Said plainly and once. Not an instruction about HOW to play —
+                # only that last turn's words were not a move and the board did
+                # not change because of them.
+                sys_p += ("\n\nLast turn you wrote about your move instead of "
+                          "submitting it, so nothing was played and the board has "
+                          "not changed. Writing the move in words does not move it. "
+                          "Call the play tool.")
+        elif waiting_turn:
+            sys_p, usr_p_board = waiting_prompt(
+                me, room_name, trait, board_state,
+                ", ".join(seated) if isinstance(seated, list) else str(seated),
+                transcript_of(state, me))
         else:
             usr_p_board = None
             sys_p = system_prompt(me, room_name, service, trait, j,
@@ -1951,8 +2014,12 @@ def main():
         # Chat keeps thinking. It has no clock, nothing truncates against it, and
         # thinking is what makes a line worth reading.
         clean, raw_content, gen_err, tool = generate(
-            api_key, a.model, sys_p, usr_p_board if board_turn else usr_p,
+            api_key, a.model, sys_p,
+            usr_p_board if (board_turn or waiting_turn) else usr_p,
             tools=tools,
+            # A waiting turn still THINKS: it has no clock of its own, and what it
+            # is for — reading an opponent and deciding what to offer — is the part
+            # worth reasoning about. Only the move turn trades thinking for speed.
             max_tokens=BOARD_TOKENS if board_turn else CHAT_TOKENS,
             think=not board_turn)
         raw = clean.strip().strip('"').strip()
@@ -2179,6 +2246,13 @@ def main():
             # as its own kind so it stays legible: this is not a citizen choosing
             # to pass, it is one that failed to move and must not be read as quiet.
             action = "board_no_move"
+            # Tell it NEXT turn that this happened. Until now the prose was
+            # withheld, the turn ended, the clock ran, and the citizen saw an
+            # unchanged board with no idea why — 286 of 725 Mastermind turns went
+            # this way, and five in a row costs the seat. One-shot, consumed like
+            # the arrival note, so it cannot pile up or repeat.
+            j["missed_move"] = True
+            store.put(a.slot, j)
             log(f"no move submitted; prose withheld from the room: {text[:70]!r}")
         elif gen_err:
             action = "error"  # generate() already logged the detail; record it durably too
