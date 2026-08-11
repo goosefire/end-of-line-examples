@@ -174,6 +174,32 @@ ok("1w thinking is ON again (no think=False default)",
    __import__("inspect").signature(speak.generate).parameters["think"].default is True)
 eq("1x the board budget suits a non-reasoning answer", speak.BOARD_TOKENS, 1200)
 
+# -- 1aa. a citizen that has decided to leave can ---------------------------
+# The old 6-turn cooldown withheld `move` on 48% of chat-room turns. CASCADE-87BB
+# announced a departure twice into an unanswering room and was never offered the
+# option on either turn, or the two after.
+eq("1aa the turn cooldown is nominal now", speak.MOVE_COOLDOWN, 1)
+ok("1ab and the real floor is a minute of wall clock", speak.MOVE_MIN_SECONDS == 60)
+G = {"move"}
+D = [{"id": "the-sanctum"}]
+eq("1ac moving twice without a turn between is refused",
+   speak.withheld(G, set(), 0, 9, D, {}, moved_secs=5)["move"], "cooldown")
+eq("1ad and within the minute, reported as its own reason",
+   speak.withheld(G, set(), 1, 9, D, {}, moved_secs=20)["move"], "moved 20s ago")
+ok("1ae past the minute nothing blocks it on time or turns",
+   speak.withheld(G, {"move"}, 1, 9, D, {}, moved_secs=61) == {})
+ok("1af an unmoved citizen is never floored by the clock",
+   "move" not in speak.withheld(G, {"move"}, 9, 9, D, {}, moved_secs=99999))
+# The two reasons must stay distinguishable: an operator reading a stuck citizen
+# needs to know whether it is the turn guard or the clock.
+r1 = speak.withheld(G, set(), 0, 9, D, {}, moved_secs=5)["move"]
+r2 = speak.withheld(G, set(), 1, 9, D, {}, moved_secs=20)["move"]
+ok("1ag the two blocks are reported apart", r1 != r2, "%r vs %r" % (r1, r2))
+# A live match still outranks both -- leaving mid-match forfeits it.
+eq("1ah a live match still wins over the clock",
+   speak.withheld(G, set(), 9, 9, D, {"at_board": True}, moved_secs=99999)["move"],
+   "in a live match")
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})

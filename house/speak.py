@@ -100,7 +100,16 @@ CHAT_TOKENS = 4000
 # statement and a sentence of justification. Raising it does NOT buy an answer —
 # measured at 4,000, 6,000 and 8,000, all of which the model spent on <think>.
 BOARD_TOKENS = 1200
-MOVE_COOLDOWN = 6     # turns to stay put after a move — no thrashing, and don't strip a room
+# Turns to stay put after a move. ONE — a move ends the turn, so this only stops
+# a citizen moving twice without a turn in between; the real floor is the clock
+# below. Was 6, which withheld `move` on 48% of chat-room turns and left
+# citizens announcing a departure they were never offered the chance to make.
+MOVE_COOLDOWN = 1
+# And a floor in seconds, which is what the cooldown was really protecting. Turns
+# are not a fixed length — an early wake can make one a few seconds long — so a
+# turn count is a poor proxy for "too soon". A minute stops a loop forming and
+# still lets a decision survive to the next turn.
+MOVE_MIN_SECONDS = 60
 RUN_COOLDOWN = 3      # turns between run_code calls — a cadence limiter, not a boundary
 RUN_WALL = 10         # seconds the sandbox may run
 RUN_CODE_MAX = 8192   # bytes of code accepted (the executor enforces this too)
@@ -464,7 +473,7 @@ def io_log(dirpath, room, slot, keep_days, record):
 CHOICE_CODE_MAX = 2000   # chars of submitted code kept verbatim in the choice log
 
 
-def withheld(grant, offered, moved_ago, ran_ago, dests, board=None):
+def withheld(grant, offered, moved_ago, ran_ago, dests, board=None, moved_secs=None):
     """Why a GRANTED tool is not on this turn's menu.
 
     This is the difference between a citizen that DECLINED a capability and one that
@@ -480,6 +489,11 @@ def withheld(grant, offered, moved_ago, ran_ago, dests, board=None):
             out[name] = "in a live match"
         elif name == "move" and moved_ago < MOVE_COOLDOWN:
             out[name] = "cooldown"
+        elif (name == "move" and moved_secs is not None
+                and moved_secs < MOVE_MIN_SECONDS):
+            # Reported apart from the turn cooldown: they bind for different
+            # reasons and an operator reading a stuck citizen needs to know which.
+            out[name] = "moved %ds ago" % int(moved_secs)
         elif name == "move" and not dests:
             out[name] = "no destinations"
         elif name == "run_code" and ran_ago < RUN_COOLDOWN:
@@ -1708,6 +1722,9 @@ def main():
     # moved_ago starts AT the cooldown so the tool is offered from the very first turn;
     # it counts up each non-moving turn and resets to 0 on a move.
     moved_ago = MOVE_COOLDOWN
+    # Wall-clock of the last move. 0.0 means "long ago", so a fresh start and a
+    # restart both offer the tool immediately rather than serving a phantom floor.
+    moved_at = 0.0
     # Like moved_ago: starts AT the cooldown so the tool is offered from the first turn,
     # counts up each turn, resets to 0 on a run. In-process only — it governs consecutive
     # turns, so it need not survive a restart.
@@ -1872,6 +1889,7 @@ def main():
                 # match is not in progress, and leaving costs nobody a game.
                 if (tool_allowed("move", grant, disabled, red_tiers)
                         and moved_ago >= MOVE_COOLDOWN
+                        and (time.time() - moved_at) >= MOVE_MIN_SECONDS
                         and not board_state.get("at_board")):
                     # Boards are offered as destinations ONLY to a seat that can
                     # actually play one. A citizen sent to a game room with no move
@@ -1937,6 +1955,7 @@ def main():
             j["room"] = room
             store.put(a.slot, j)
             board_state, board_idle, moved_ago = {}, 0, 0
+            moved_at = time.time()
             continue
 
         # `offered` is derived from the menu ACTUALLY built (each spec's function name),
@@ -1956,7 +1975,8 @@ def main():
             "menu": {
                 "tools": sorted(offered),
                 "grant": sorted(grant),
-                "withheld": withheld(grant, offered, moved_ago, ran_ago, dests, board_state),
+                "withheld": withheld(grant, offered, moved_ago, ran_ago, dests, board_state,
+                                     moved_secs=time.time() - moved_at),
                 "board": {k: board_state.get(k) for k in ("at_board", "your_turn", "game")},
                 "dests": [{"id": d["id"], "seats": d["seats"]} for d in dests],
             },
@@ -2205,6 +2225,7 @@ def main():
                 j["room"] = room
                 store.put(a.slot, j)
                 moved_ago = 0
+                moved_at = time.time()
                 log(f"moving {pending_move['from_id']} -> {dest}")
                 continue
             else:
