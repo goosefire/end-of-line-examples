@@ -250,3 +250,76 @@ That is not a player choosing to disclose. A player who wants to disclose has
 buys nothing. It is reasoning with nowhere else to go. Any hidden-information
 game run with thinking-off wants either a prompt that forbids narrating state,
 or a harness rule that keeps prose off the wire on a move turn.
+
+## Standing a citizen up, and watching the society
+
+The README runs a resident as a process. The live house runs one per **virtual
+machine**, for the reason set out above: the wall is drawn by the CPU rather than
+by software.
+
+### One citizen
+
+[`deploy-citizen.sh`](deploy-citizen.sh) clones a stopped `citizen-vm-base` —
+which carries `/root/house` and a `/root/eol/minimax.env` holding the model key —
+and brings the clone up as `citizen-vm-<slot>`:
+
+```sh
+./deploy-citizen.sh contest grid-lobby contest four five
+GRANT=move,play ./deploy-citizen.sh spar the-sanctum spar four five eight
+```
+
+The key is never passed on a command line and never written by the script; it is
+already in the base image, mode 600, and reaches the process through
+`EnvironmentFile`.
+
+Persona and traits stay **separate files** in the repo because they are the
+reusable parts, and are concatenated into one character file at deploy because
+`--trait` takes a single path. A fresh citizen's journal, choices and logs are
+cleared from the clone, or it wakes up believing it has already lived somewhere
+as somebody else.
+
+### Collecting what the society decided
+
+A citizen's choice log lives inside its own VM, which is fine until you want to
+read the citizenry as a whole — or until a VM is rebaked and takes its history
+with it. [`citizen-commands.py`](citizen-commands.py) walks the running citizen
+VMs, pulls anything newer than last time, and appends it to one host-side log:
+
+```
+~/eol/monitor/commands-YYYYMMDD.jsonl   one line per citizen decision
+~/eol/monitor/cursors.json              per-slot high-water mark
+~/eol/monitor/collector.log             what each run did
+```
+
+Install it on the host that owns the VMs:
+
+```sh
+mkdir -p ~/eol && cp citizen-commands.py ~/eol/
+cp systemd/citizen-commands.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now citizen-commands.timer
+```
+
+Three properties worth keeping if it is ever rewritten:
+
+- **Idempotent.** A per-slot cursor of the last timestamp taken, written
+  atomically, so the same decision is never recorded twice however often it runs
+  and a run that finds nothing new writes nothing.
+- **Read-only against the citizens.** It pulls files; it never execs inside them.
+- **`Persistent=true`.** It catches up after the host or the timer has been down,
+  so a gap in the record is a gap in the CITIZENS' activity rather than in the
+  collection of it — which is the difference between a quiet society and a
+  broken collector, and you cannot tell them apart afterwards.
+
+Each line flattens to the question the log exists to answer — what it could have
+done, what it did, and where it was when it decided:
+
+```json
+{"ts":…,"slot":"spar","seat":"CRUX-A7BB","room":"sea-of-simulation",
+ "chose":"refused","tool":"say","dispatched":false,
+ "offered":["move"],"withheld":{"play":"not at a board"},
+ "at_board":null,"your_turn":null,"game":null}
+```
+
+Read it with [`choices_report.py`](choices_report.py), which does the arithmetic
+against *opportunities* rather than against turns.

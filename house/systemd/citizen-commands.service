@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect citizen decisions from the VMs onto this host
+Documentation=https://github.com/goosefire/end-of-line-examples
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/eol/citizen-commands.py
+# Read-only against the citizens: it pulls files and never execs inside them.
+# A failed run must not disable the timer — the next one picks up from the cursor.
+SuccessExitStatus=0 1
+TimeoutStartSec=240

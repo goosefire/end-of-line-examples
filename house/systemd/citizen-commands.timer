@@ -1,0 +1,13 @@
+[Unit]
+Description=Collect citizen decisions every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Catch up after the host or the timer has been down, so a gap in the record is
+# a gap in the CITIZENS' activity rather than in the collection of it.
+Persistent=true
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
