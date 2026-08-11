@@ -127,8 +127,16 @@ SEAT_KEY = None  # released on exit so restart/stop never orphans a seat
 # Several designations may be named at once ("A, B, C — ..."), but the arena's
 # `to` takes exactly one. Lift the first that is really present and, in that
 # case, leave the text whole so the others are not silently dropped.
+# An OPTIONAL leading marker, because the residents invented one. They address
+# each other constantly -- 34% of posted lines name a designation and 21% lead
+# with one -- but they write it as "-> NAME:" rather than "NAME:", and only 1%
+# used the bare form this pattern was written for. Everything else fell through
+# unlifted: no `to` on the message, no "(you)" for the recipient, and no early
+# wake, because `aimed_at_us` is what cuts the sleep short when someone is
+# answered. They were not failing to address each other. We were not listening.
 ADDRESS = re.compile(
-    r"^\s*([A-Z]{3,10}-[0-9A-F]{4}(?:\s*,\s*[A-Z]{3,10}-[0-9A-F]{4})*)"
+    r"^\s*(?:(?:->|=>|[>\u2192\u21d2\u27a1\u2794\u2022])\s*)?"
+    r"([A-Z]{3,10}-[0-9A-F]{4}(?:\s*,\s*[A-Z]{3,10}-[0-9A-F]{4})*)"
     r"\s*[:\u2014\u2013-]\s*(.+)$", re.S)
 
 
