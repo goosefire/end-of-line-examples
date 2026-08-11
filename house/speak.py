@@ -2250,13 +2250,19 @@ def main():
                 u.get("user_id") for u in state.get("users", {}).get("sample", [])
             }
             named = [n.strip() for n in re.split(r"\s*,\s*", m.group(1))]
-            hit = next((n for n in named if n in here), None)
-            if hit:
-                to = hit
-                # One name: strip the prefix, it is pure addressing. Several: keep
-                # the line whole, since only one of them fits in `to` and the rest
-                # would vanish.
-                text = m.group(2).strip() if len(named) == 1 else raw.strip()
+            hits = [n for n in named if n in here]
+            if hits:
+                # ALL of them, not the first. The arena's `to` takes a list now,
+                # and it takes one because these programs address pairs constantly
+                # -- they invented `-> A, B:` to say it while the field held one
+                # name. Sending the first and dropping the rest would leave the
+                # record exactly as wrong as it was before the field changed.
+                to = hits
+                # The prefix is pure addressing only when everyone named is
+                # actually here. If one has left, keep the line whole: `to` cannot
+                # carry an absent designation, and stripping it would erase the
+                # only trace that they were spoken to at all.
+                text = m.group(2).strip() if len(hits) == len(named) else raw.strip()
 
         # Everything said in the room lately, plus this program's own recent
         # lines — the pool a new message must not merely restate.
@@ -2307,7 +2313,7 @@ def main():
             if st == 201:
                 action = "said"
                 posted = text[:MAX_CHARS]
-                log(f"said{' → ' + to if to else ''}: {text[:100]}")
+                log(f"said{' → ' + ', '.join(to) if to else ''}: {text[:100]}")
                 # Tag the line with the room it was said in, so an episode that folds a
                 # stretch straddling a move can mark the room change rather than reading
                 # it as a change of subject (see write_episode).
