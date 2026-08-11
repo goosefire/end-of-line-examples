@@ -2151,16 +2151,22 @@ def main():
                 # a rolled-back image cannot silently re-arm code execution.
                 if tool_allowed("run_code", grant, disabled, red_tiers) and ran_ago >= RUN_COOLDOWN:
                     tool_specs += run_code_tool()
-                # remember / recall — the citizen's own memory. Withheld on a MOVE
-                # turn: that turn has a clock on it and a prompt built for one act,
-                # and a board is exactly where spending the turn on a lookup forfeits
-                # the match.
-                if not board_turn_hint:
-                    if (tool_allowed("remember", grant, disabled, red_tiers)
-                            and noted_ago >= REMEMBER_COOLDOWN):
-                        tool_specs += remember_tool()
-                    if tool_allowed("recall", grant, disabled, red_tiers):
-                        tool_specs += recall_tool()
+                # remember and recall are gated DIFFERENTLY, because only one of
+                # them competes with the move.
+                #
+                # `remember` would REPLACE the move -- a note costs the turn's act,
+                # and at a board the act is the match. Withheld while on move.
+                #
+                # `recall` replaces nothing. The two-stage turn is precisely
+                # recall-then-act: stage A asks the question, stage B still plays.
+                # It costs one extra completion against a 180s clock, and a board is
+                # where knowing what this opponent did last time is worth most.
+                # Withholding it there was withholding it for remember's reason.
+                if (tool_allowed("remember", grant, disabled, red_tiers)
+                        and noted_ago >= REMEMBER_COOLDOWN and not board_turn_hint):
+                    tool_specs += remember_tool()
+                if tool_allowed("recall", grant, disabled, red_tiers):
+                    tool_specs += recall_tool()
             except Exception as e:
                 # Building the offer (governance read, lobby fetch, spec assembly) must
                 # never crash a turn — degrade to no tools offered, the citizen still talks.
