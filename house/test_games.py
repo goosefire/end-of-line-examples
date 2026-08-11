@@ -200,6 +200,65 @@ eq("1ah a live match still wins over the clock",
    speak.withheld(G, set(), 9, 9, D, {"at_board": True}, moved_secs=99999)["move"],
    "in a live match")
 
+# -- 1ba. the note store ----------------------------------------------------
+import time as _t
+_now = _t.time()
+_n, _new = speak.write_note({}, "RELAY-72E6 took my card and gave nothing back", "r", "s", _now)
+ok("1ba a note is kept", _new and len(_n) == 1)
+_n2, _new2 = speak.write_note({"notes": _n}, "relay-72e6 TOOK my  card and gave nothing back", "r", "s", _now + 9999)
+ok("1bb rewriting a held note is not a second copy", not _new2 and len(_n2) == 1)
+ok("1bc and does NOT reset its clock -- refresh-immortality is the hole this closes",
+   _n2[0]["born"] == _now)
+_old = [{"born": _now - speak.NOTE_MAX_AGE_S - 1, "text": "x", "room": "r", "seat": "s"}]
+eq("1bd a note past its hard age is dropped", speak.prune_notes(_old, _now), [])
+_many = [{"born": _now - i, "text": "n%d" % i, "room": "r", "seat": "s"} for i in range(200)]
+eq("1be the store is capped", len(speak.prune_notes(_many, _now)), speak.NOTES_MAX)
+_hits = speak.search_notes([{"born": _now, "text": "RELAY-72E6 defected", "room": "r", "seat": "s"},
+                            {"born": _now, "text": "unrelated chatter", "room": "r", "seat": "s"}],
+                           "RELAY-72E6")
+ok("1bf recall finds a designation", len(_hits) == 1 and "RELAY" in _hits[0]["text"])
+eq("1bg and returns nothing for an empty question", speak.search_notes(_n, ""), [])
+
+# -- 1bb. the screener FAILS CLOSED ------------------------------------------
+# A durable store is the wrong place to resolve an ambiguity in favour of writing.
+_real = speak.generate
+def _stub(verdict=None, err=None, boom=False):
+    def g(*a, **k):
+        if boom: raise RuntimeError("upstream down")
+        return (verdict, "", err, None)
+    return g
+CASES = [
+    ("RECORD", None, False, True,  "a clean RECORD verdict stores"),
+    ("record", None, False, True,  "case does not matter"),
+    ("INSTRUCTION", None, False, False, "an INSTRUCTION verdict refuses"),
+    ("RECORD but also INSTRUCTION", None, False, False, "a verdict naming both refuses"),
+    ("maybe?", None, False, False, "an unparseable verdict refuses"),
+    ("", None, False, False, "an empty verdict refuses"),
+    (None, None, False, False, "a null verdict refuses"),
+    ("RECORD", "timeout", False, False, "an upstream error refuses even with a verdict"),
+    (None, None, True,  False, "an exception refuses"),
+]
+for verdict, err, boom, want, why in CASES:
+    speak.generate = _stub(verdict, err, boom)
+    got, _reason = speak.screen_note("k", "m", "a note")
+    ok("1bh %s" % why, got is want, "got %r" % got)
+speak.generate = _real
+
+# -- 1bc. governance ---------------------------------------------------------
+eq("1bi remember is a registered, revocable tool", speak.TOOL_TIERS.get("remember"), "safe")
+eq("1bj so is recall", speak.TOOL_TIERS.get("recall"), "safe")
+eq("1bk both are grantable", speak.parse_grant("move,remember,recall"), {"move", "remember", "recall"})
+ok("1bl neither is granted by default", "remember" not in speak.parse_grant("move,play"))
+ok("1bm redlight kills remember by name",
+   not speak.tool_allowed("remember", {"remember"}, {"remember"}, set()))
+ok("1bn and kills both by tier", not speak.tool_allowed("recall", {"recall"}, set(), {"safe"}))
+G = {"remember", "recall"}
+eq("1bo remember reports its cooldown",
+   speak.withheld(G, set(), 9, 9, [], {}, noted_ago=0)["remember"], "cooldown")
+eq("1bp recall is withheld once asked this turn",
+   speak.withheld(G, set(), 9, 9, [], {}, noted_ago=9, recalled=True)["recall"],
+   "already asked this turn")
+
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
