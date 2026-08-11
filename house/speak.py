@@ -2239,7 +2239,15 @@ def main():
         # Own cards AND own probe answers — see read_board. Both are private by the
         # engine's design (playerView hands them to this seat and nobody else), so
         # both are protected by the same rule.
-        if board_turn and not tool:
+        if board_turn and tool:
+            # A MOVE WAS MADE, AND ITS REASONING IS NOT FOR THE ROOM. Withholding
+            # only covered the turns where the move FAILED, so every successful
+            # move published its working alongside it -- 952 of 973 posted lines
+            # at a board came from here, which is the whole of the narration the
+            # rooms were filling with. The waiting turn was never the source.
+            action = "board_moved"
+            log("moved; working not posted: %r" % text[:60])
+        elif board_turn and not tool:
             # A MOVE TURN POSTS NOTHING. Whatever prose arrives here instead of a
             # tool call is the model working out its move in the open, and the
             # room it would be working it out in contains its opponent. Recorded
