@@ -27,6 +27,17 @@ CURSORS = os.path.join(OUT, "cursors.json")
 LOG = os.path.join(OUT, "collector.log")
 # A citizen writing ~1 line per 4 minutes cannot approach this; a loop can.
 MAX_LINES_PER_SLOT = 2000
+# How long this host-side record lives.
+#
+# It exists because a citizen's own logs are inside its VM and go with it when
+# the VM is rebaked -- but that makes this the LONGEST-LIVED copy of anything it
+# carries, and it now carries a preview of what a citizen chose to remember. A
+# note lives 6h in the store and 2 days in the citizen's own choice log; without
+# a bound here it would live forever on this host, which would make "evicted"
+# untrue system-wide. Fourteen days is long enough for the before-and-after
+# comparisons this record is kept for, and it is the outer bound on note content
+# anywhere.
+KEEP_DAYS = 14
 
 
 def note(msg):
@@ -69,6 +80,22 @@ def pull(vm, slot, day):
     rc, out, _ = run(["lxc", "file", "pull",
                       f"{vm}/root/eol/choices/{slot}-{day}.jsonl", "-"], timeout=60)
     return out.decode("utf-8", "replace") if rc == 0 else None
+
+
+def prune(out_dir, keep_days=KEEP_DAYS):
+    """Drop collected days older than the window. Never raises into the timer."""
+    cutoff = time.strftime("%Y%m%d",
+                           time.gmtime(time.time() - keep_days * 86400))
+    for name in os.listdir(out_dir):
+        if not (name.startswith("commands-") and name.endswith(".jsonl")):
+            continue
+        day = name[len("commands-"):-len(".jsonl")]
+        if len(day) == 8 and day.isdigit() and day < cutoff:
+            try:
+                os.remove(os.path.join(out_dir, name))
+                note("pruned %s (older than %d days)" % (name, keep_days))
+            except Exception as e:
+                note("could not prune %s (%s)" % (name, e))
 
 
 def main():
@@ -124,6 +151,23 @@ def main():
                 "at_board": board.get("at_board"),
                 "your_turn": board.get("your_turn"),
                 "game": board.get("game"),
+                # --- authored memory -------------------------------------
+                # Without these the record says a citizen chose `remember` and
+                # not WHAT it kept, nor whether the screener refused it and why
+                # -- which makes every later turn unreadable, the exact failure
+                # LOGGING.md was written after.
+                #
+                # A bounded PREVIEW, matching what the citizen's own log holds.
+                # A full copy here would be a third store, and the longest-lived
+                # of the three.
+                "recall_query": (rec.get("recall") or {}).get("query"),
+                "recall_hits": (rec.get("recall") or {}).get("hits"),
+                "note_preview": call.get("preview"),
+                "note_screen": call.get("screen"),
+                "note_new": call.get("new"),
+                "notes_held": call.get("held"),
+                # The second stage's menu, present only on a turn that recalled.
+                "stage_b": menu.get("stage_b"),
             })
             high = max(high, ts)
         if fresh:
@@ -133,6 +177,11 @@ def main():
                     f.write(json.dumps(r, separators=(",", ":")) + "\n")
             added += len(fresh)
         cursors[slot] = high
+
+    try:
+        prune(OUT)
+    except Exception as e:
+        note("prune failed (%s)" % e)
 
     tmp = CURSORS + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
