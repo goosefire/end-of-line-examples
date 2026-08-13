@@ -72,6 +72,13 @@ CARRY_CHARS = 1400
 EPISODE_EVERY = 12    # fold the raw journal into one episode every N of a program's own lines
 EPISODE_CHARS = 300   # cap on a single episode
 EPISODE_KEEP = 6      # episodes carried into working memory (the bounded "life so far")
+# Bounds on the new memory lanes. Arena output and other programs lines are
+# untrusted in SIZE as well as in content, and each one lands in a journal
+# that is rewritten whole every turn.
+ENTRY_TEXT_MAX = 600      # cap on any single journal entry text
+HISTORY_ROW_MAX = 240     # cap on one serialized board row
+HISTORY_TAIL = 12         # board rows carried for result correlation
+RECONCILE_SCAN = 40       # how far back to look for an unresolved did
 EPISODE_SRC_MAX = 30  # most raw lines fed to one episode call (also bounds a migration backlog)
 # Own-turns a citizen may hold a seat at a LIVE match without submitting a move
 # before the harness gives the seat up for it. Squatting is the denial-of-service
@@ -579,6 +586,80 @@ def consolidate(api_key, model, trait, j):
 
 # ------------------------------------------------------------- memory --
 
+def journal(j, kind, text, **fields):
+    """Append ONE entry to the verbatim record.
+
+    Until now `j["recent"].append(...)` happened in exactly one place — inside
+    the success branch of a `say` — so the substrate held only speech the
+    citizen managed to post. A citizen could play a whole game and keep nothing:
+    measured on `odds`, 403 entries and 138 episodes contained zero of the words
+    it had actually attempted and zero run results, while the only game
+    reasoning present got there because it talked about a move instead of
+    making one. The layer preserved the turns where it failed to act.
+
+    `kind` is the entry's PROVENANCE — who authored the text — and is
+    deliberately not a trust flag:
+
+      said  the citizen's own posted line. Proves it uttered this, not that it
+            is true, and NOT that the citizen originated it: a citizen that
+            echoes an injected line launders that line into this lane.
+      did   an action the citizen took. Proves the action occurred, not that it
+            was independently chosen.
+      got   the arena's own response to an action — structured engine output.
+      saw   a line another program emitted. Proves only that the arena
+            delivered it under that name. UNTRUSTED, always.
+
+    Authority is tracked separately by the reader, never inferred from `kind`.
+
+    Entries written before this existed carry no `kind` and are read as `said`,
+    so nothing needs migrating.
+    """
+    e = {"ts": int(time.time() * 1000), "kind": kind, "text": str(text)[:ENTRY_TEXT_MAX]}
+    for k, v in fields.items():
+        if v is not None:
+            e[k] = v
+    j.setdefault("recent", []).append(e)
+    return e
+
+
+def reconcile_results(j, board_state):
+    """Match an outstanding `did` to the row its ply produced, and write `got`.
+
+    The arena's move endpoint answers `{accepted, ply}` and NOT the feedback, so
+    a result cannot be recorded at the moment it is caused. The obvious
+    substitute — treat the next turn's board as the answer — is wrong: by then
+    the match may have restarted, another seat may have moved, or the turn may
+    simply be late, and a result filed against the wrong move is worse than no
+    result at all.
+
+    So a `did` is written with `outcome: "pending"` and reconciled only against
+    a board that AGREES with it: same `match_id`, and a history long enough to
+    contain the row that ply produced. Anything else is left pending. A pending
+    entry that never reconciles stays pending, which is honest.
+    """
+    if not isinstance(board_state, dict):
+        return
+    mid = board_state.get("match_id")
+    hlen = board_state.get("history_len")
+    tail = board_state.get("history_tail") or []
+    for e in reversed(j.get("recent", [])[-RECONCILE_SCAN:]):
+        if e.get("kind") != "did" or e.get("outcome") != "pending":
+            continue
+        if not mid or e.get("match_id") != mid or not isinstance(hlen, int):
+            continue
+        idx = e.get("ply")
+        if not isinstance(idx, int) or idx >= hlen:
+            continue
+        # The tail holds the LAST `HISTORY_TAIL` rows; translate the absolute
+        # ply into that window and decline if it has already scrolled past.
+        off = idx - (hlen - len(tail))
+        if off < 0 or off >= len(tail):
+            e["outcome"] = "unseen"  # correct, and beyond recovery
+            continue
+        e["outcome"] = "recorded"
+        journal(j, "got", tail[off], match_id=mid, ply=idx, act="result")
+
+
 def write_episode(store, a, api_key, seat, j):
     """Fold the raw lines said since the last episode into ONE short, factual
     episode — additive, kept apart from identity, and never a summary of prior
@@ -864,6 +945,19 @@ def read_board(mine):
         # path can refuse to publish one; never shown to anyone else.
         'match_id': mine.get('match_id') if isinstance(mine.get('match_id'), str) else None,
         'ply': view.get('ply') if isinstance(view.get('ply'), int) else None,
+        # --- what the RESULT lane needs, and nothing more -------------------
+        # `at_board` is false once a match finishes, so the terminal state has
+        # to be carried separately or a run's ending is the one thing never
+        # recorded. Bounded on both axes: a tail of rows rather than the whole
+        # history, and each row serialized under a cap, because this is arena
+        # output and an unbounded copy of it lands in a journal we rewrite
+        # every turn.
+        'status': view.get('status') if isinstance(view.get('status'), str) else None,
+        'solved': view.get('solved') if isinstance(view.get('solved'), bool) else None,
+        'history_len': len(view['history']) if isinstance(view.get('history'), list) else None,
+        'history_tail': ([json.dumps(r, separators=(',', ':'))[:HISTORY_ROW_MAX]
+                          for r in view['history'][-HISTORY_TAIL:]]
+                         if isinstance(view.get('history'), list) else None),
     }
 
 
@@ -1978,6 +2072,19 @@ def main():
             # reject it, but the gate deciding to offer `play` at all must be a fact
             # about THIS turn, not the last one that happened to succeed.
             board_state = read_board(mine) if st == 200 else {}
+            # Late-bind results to the moves that caused them, and record a
+            # finished run exactly once — `at_board` is false by then, so a
+            # terminal state is otherwise the one thing never written down.
+            reconcile_results(j, board_state)
+            if board_state.get("status") == "finished" and board_state.get("match_id"):
+                if j.get("last_result_match") != board_state["match_id"]:
+                    j["last_result_match"] = board_state["match_id"]
+                    journal(j, "got",
+                            ("solved" if board_state.get("solved") else "not solved")
+                            + f" after {board_state.get('history_len')} moves",
+                            act="match_end", match_id=board_state["match_id"],
+                            game=board_state.get("game"), room=room)
+            store.put(a.slot, j)
             if board_state.get("at_board"):
                 spec = game_surfaces().get(board_state.get("game") or "") or {}
                 board_state["params"] = spec.get("params")
@@ -2397,9 +2504,30 @@ def main():
                 body = {"match_id": mid, "move": args}
                 if isinstance(board_state.get("ply"), int):
                     body["ply"] = board_state["ply"]
+                # WRITE-AHEAD. Persist the attempt BEFORE dispatching, because
+                # `play` ends the turn: a crash after the arena accepted a move
+                # and before the journal was written is the same amnesia this
+                # whole change exists to remove, and it would be invisible.
+                attempt = journal(
+                    j, "did", json.dumps(args, separators=(",", ":"))[:ENTRY_TEXT_MAX],
+                    act="play", game=board_state.get("game"), room=room,
+                    match_id=mid, ply=body.get("ply"), outcome="dispatching")
+                store.put(a.slot, j)
                 pst, pres = arena(room, "/moves", body, key=key)
                 ok = pst in (200, 201)
                 log(f"play -> {pst} {'' if ok else repr(pres)[:120]}")
+                # The arena answers {accepted, ply} and never the feedback, so
+                # the outcome stays pending until a board that AGREES on
+                # match_id and ply can be read (see reconcile_results).
+                attempt["outcome"] = "pending" if ok else "refused"
+                attempt["status"] = pst
+                if not ok:
+                    journal(j, "got", repr(pres)[:ENTRY_TEXT_MAX], act="refused",
+                            match_id=mid, ply=body.get("ply"))
+                elif isinstance(pres, dict) and isinstance(pres.get("ply"), int):
+                    # Trust the arena's ply over our own optimistic guess.
+                    attempt["ply"] = pres["ply"]
+                store.put(a.slot, j)
                 if ok:
                     board_idle = 0
                 choice["chose"] = "play"

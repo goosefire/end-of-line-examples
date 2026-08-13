@@ -739,3 +739,97 @@ class ChoiceLog(unittest.TestCase):
         speak.choice_log("/proc/nonexistent-eol", "s1", 2, {"ok": True})
         with tempfile.TemporaryDirectory() as d:
             speak.choice_log(d, "s1", 2, {"bad": object()})
+
+
+class ActionMemory(unittest.TestCase):
+    """The did/got lane: what a citizen DID, and what the arena said back.
+
+    The correlation is the part worth testing. The arena's move endpoint answers
+    `{accepted, ply}` and never the feedback, so a result cannot be recorded at
+    the moment it is caused. Treating the NEXT board as the answer is the
+    tempting shortcut and it is wrong — by then the match may have restarted or
+    another seat may have moved — so a `did` reconciles only against a board
+    that agrees on match_id AND carries the row that ply produced.
+    """
+
+    def j(self):
+        return {"recent": [], "episodes": [], "episodes_upto": 0}
+
+    def board(self, mid="m1", hlen=2, rows=None):
+        return {"match_id": mid, "history_len": hlen,
+                "history_tail": rows if rows is not None else ['{"a":"crane"}', '{"a":"stone"}']}
+
+    def test_journal_tags_provenance_and_bounds_text(self):
+        j = self.j()
+        e = speak.journal(j, "did", "x" * 5000, act="play", match_id="m1", ply=0)
+        self.assertEqual(e["kind"], "did")
+        self.assertEqual(len(e["text"]), speak.ENTRY_TEXT_MAX)
+        self.assertEqual(j["recent"][-1]["match_id"], "m1")
+
+    def test_journal_drops_none_fields(self):
+        j = self.j()
+        e = speak.journal(j, "said", "hello", to=None, room="io-tower")
+        self.assertNotIn("to", e)
+        self.assertEqual(e["room"], "io-tower")
+
+    def test_result_is_recorded_against_the_move_that_caused_it(self):
+        j = self.j()
+        speak.journal(j, "did", '{"attempt":"crane"}', act="play",
+                      match_id="m1", ply=0, outcome="pending")
+        speak.reconcile_results(j, self.board())
+        did = [e for e in j["recent"] if e["kind"] == "did"][0]
+        got = [e for e in j["recent"] if e["kind"] == "got"]
+        self.assertEqual(did["outcome"], "recorded")
+        self.assertEqual(len(got), 1)
+        # ply 0 must pick row 0, not merely the most recent row.
+        self.assertEqual(got[0]["text"], '{"a":"crane"}')
+        self.assertEqual(got[0]["ply"], 0)
+
+    def test_a_different_match_never_reconciles(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.reconcile_results(j, self.board(mid="m2"))
+        self.assertEqual(j["recent"][0]["outcome"], "pending")
+        self.assertFalse([e for e in j["recent"] if e["kind"] == "got"])
+
+    def test_a_board_that_does_not_yet_contain_the_row_stays_pending(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=5, outcome="pending")
+        speak.reconcile_results(j, self.board(hlen=2))
+        self.assertEqual(j["recent"][0]["outcome"], "pending")
+
+    def test_a_row_that_scrolled_out_of_the_tail_is_marked_unseen(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        # 40 moves in, but only the last two rows are carried.
+        speak.reconcile_results(j, self.board(hlen=40))
+        self.assertEqual(j["recent"][0]["outcome"], "unseen")
+        self.assertFalse([e for e in j["recent"] if e["kind"] == "got"])
+
+    def test_reconciling_twice_does_not_duplicate_the_result(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.reconcile_results(j, self.board())
+        speak.reconcile_results(j, self.board())
+        self.assertEqual(len([e for e in j["recent"] if e["kind"] == "got"]), 1)
+
+    def test_a_refused_move_is_never_reconciled(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="refused")
+        speak.reconcile_results(j, self.board())
+        self.assertEqual(j["recent"][0]["outcome"], "refused")
+
+    def test_garbage_board_state_is_survivable(self):
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        for bad in (None, {}, {"match_id": "m1"}, {"match_id": "m1", "history_len": "two"}):
+            speak.reconcile_results(j, bad)
+        self.assertEqual(j["recent"][0]["outcome"], "pending")
+
+    def test_entries_written_before_this_existed_read_as_said(self):
+        # No `kind` on legacy entries; the reader must not crash on them and
+        # must not mistake them for observations.
+        j = {"recent": [{"ts": 1, "text": "old line", "room": "io-tower"}],
+             "episodes": [], "episodes_upto": 0}
+        speak.reconcile_results(j, self.board())
+        self.assertEqual(j["recent"][0].get("kind", "said"), "said")
