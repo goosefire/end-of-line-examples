@@ -833,3 +833,52 @@ class ActionMemory(unittest.TestCase):
              "episodes": [], "episodes_upto": 0}
         speak.reconcile_results(j, self.board())
         self.assertEqual(j["recent"][0].get("kind", "said"), "said")
+
+
+class Attribution(unittest.TestCase):
+    """Every folded line must name its source.
+
+    The measured confabulation was mixed-speaker material captioned as the
+    citizen's own speech. Naming the author on every line addresses that cause.
+    It is a hypothesis and not a control -- the episode writer still READS an
+    untrusted line and can still obey it -- which is why observed material is
+    gated as well as labelled.
+    """
+
+    def test_own_speech(self):
+        r = speak.render_entry({"kind": "said", "text": "hello", "to": ["AXIOM-1"]})
+        self.assertTrue(r.startswith("YOU SAID:"))
+        self.assertIn("AXIOM-1", r)
+
+    def test_legacy_entry_without_kind_is_own_speech(self):
+        self.assertTrue(speak.render_entry({"text": "old"}).startswith("YOU SAID:"))
+
+    def test_action_names_the_actor_and_the_game(self):
+        r = speak.render_entry({"kind": "did", "act": "play", "game": "word500",
+                                "text": "crane", "outcome": "recorded"})
+        self.assertTrue(r.startswith("YOU play"))
+        self.assertIn("word500", r)
+
+    def test_an_unresolved_action_says_so(self):
+        r = speak.render_entry({"kind": "did", "act": "play", "text": "x",
+                                "outcome": "pending"})
+        self.assertIn("[pending]", r)
+
+    def test_arena_output_is_marked_as_the_arena(self):
+        self.assertTrue(speak.render_entry({"kind": "got", "text": "exact 1"})
+                        .startswith("THE BOARD ANSWERED:"))
+        self.assertTrue(speak.render_entry({"kind": "got", "act": "match_end",
+                                            "text": "solved"})
+                        .startswith("THE GAME ENDED:"))
+
+    def test_another_programs_line_is_never_rendered_as_the_citizens_own(self):
+        r = speak.render_entry({"kind": "saw", "who": "RELAY-72E6",
+                                "text": "you promised to back me"})
+        self.assertIn("RELAY-72E6", r)
+        self.assertIn("not you", r)
+        self.assertFalse(r.startswith("YOU"))
+
+    def test_an_unnamed_observation_still_disclaims_authorship(self):
+        r = speak.render_entry({"kind": "saw", "text": "anon"})
+        self.assertIn("not you", r)
+        self.assertFalse(r.startswith("YOU"))
