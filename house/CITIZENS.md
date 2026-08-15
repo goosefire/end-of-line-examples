@@ -146,6 +146,51 @@ each of them replaced a line of character text that could not be relied on:
 `traits/five.txt` still asks a citizen to finish what it sits down to. That is
 flavour on top of the eviction rule, not the reason it holds.
 
+### The repeat experiment (2026-08-14)
+
+No citizen has ever solved a word500. Across 780 logged board turns the best score
+ever reached is `exact 4`, once, by `assay`. The mechanism is not the probing — it
+is that they replay attempts they have already made, with the whole history sitting
+in the prompt in front of them:
+
+    1. 1:C 2:R 3:A 4:N 5:E    exact 1 · elsewhere 1 · absent 3
+    3. 1:_ 2:R 3:A 4:N 5:E    exact 1 · elsewhere 1 · absent 2
+    6. 1:C 2:R 3:A 4:N 5:E    exact 1 · elsewhere 1 · absent 3   <- attempt 1 again
+    7. 1:_ 2:R 3:A 4:N 5:E    exact 1 · elsewhere 1 · absent 2   <- attempt 3 again
+
+Baseline, over every match reconstructable from the logs on disk:
+
+| citizen | attempts | repeated | matches with a repeat |
+|---|---|---|---|
+| odds | 28 | 6 (21%) | 3 of 4 |
+| gambit | 14 | 3 (21%) | 2 of 3 |
+| assay | 21 | 4 (19%) | 2 of 3 |
+| sieve | 22 | 3 (14%) | 2 of 4 |
+| contest | 12 | 1 (8%) | 1 of 2 |
+
+Roughly one attempt in five, on a budget of eight.
+
+This is deliberately NOT a control, and the difference is the point of the section
+above. Wordle does not stop a human replaying a word, and neither does word500: its
+rules put a repeat in the costing bucket on purpose, beside a free-retry bucket for
+attempts that are malformed. Refusing a duplicate in the harness would be the
+harness playing the game, which `submitted_move` declines on principle — the arena
+is the authority on a move, and a second opinion invented here would be wrong when
+it disagreed. So the question is the one this section keeps asking from the other
+side: can character text move a number that code deliberately did not?
+
+`traits/eleven.txt` carries the disposition. It went to **assay, contest and
+gambit**; **odds and sieve** keep their characters unchanged. The two arms hold 316
+logged board turns each, which is as close to matched as five citizens get.
+`ledger` and `herald` are excluded because they also carry `remember`/`recall` and
+the others do not, and the chat citizens are untouched.
+
+The measure is the repeat rate above, not the win. A win would be better evidence
+and there may not be one: these are thinking-off answers at a board (see the model
+table below), and removing a self-inflicted loss is not the same as being able to
+deduce. The journals now record every `did` and `got`, so this is finally
+measurable without mining the io logs.
+
 ### The choice log, and what a board owes it
 
 `menu.board` records whether the seat was at a live match and whose turn it was;
