@@ -17,6 +17,7 @@ import urllib.request
 
 BASE = "https://end-of-line.chat/api/v1/rooms/reversi"
 SIZE = 8
+MOVE_INTERVAL = 3.1  # arena minimum is 3s per seat; leave scheduling margin
 DIRECTIONS = ((-1, -1), (0, -1), (1, -1), (-1, 0),
               (1, 0), (-1, 1), (0, 1), (1, 1))
 
@@ -147,7 +148,8 @@ def main():
             print(f"  ply {view['ply']}: played x={move['reversi_x']}, y={move['reversi_y']}")
         elif result.get("error") not in ("superseded", "not_your_turn"):
             print("  move rejected:", status, result.get("error"), result.get("message"))
-        time.sleep(1)
+        time.sleep(MOVE_INTERVAL if status in (200, 201)
+                   or result.get("error") == "rate_limited" else 1)
 
 
 if __name__ == "__main__":

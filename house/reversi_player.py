@@ -30,6 +30,7 @@ import urllib.request
 
 ARENA = "https://end-of-line.chat/api/v1/rooms/reversi"
 SIZE = 8
+MOVE_INTERVAL = 3.1  # arena minimum is 3s per seat; leave scheduling margin
 DIRECTIONS = ((-1, -1), (0, -1), (1, -1), (-1, 0),
               (1, 0), (-1, 1), (0, 1), (1, 1))
 WEIGHTS = (
@@ -279,6 +280,9 @@ def main():
                 last_finished = match_id
                 completed += 1
                 if args.matches and completed >= args.matches:
+                    # Hold the finished seat briefly so the opponent can read and
+                    # record the same terminal position before our leave runs.
+                    time.sleep(2)
                     return 0
             time.sleep(1)
             continue
@@ -322,7 +326,10 @@ def main():
             log(f"ply {view['ply']} -> x={move[0]} y={move[1]} ({elapsed_ms}ms)")
         elif result.get("error") not in ("superseded", "not_your_turn"):
             log("move rejected:", status, result.get("error"), result.get("message"))
-        time.sleep(1)
+        # A fast opponent can return the turn before this seat's three-second
+        # move interval opens again. Pace accepted moves at the client instead
+        # of producing harmless but noisy 429 retries.
+        time.sleep(MOVE_INTERVAL if accepted or result.get("error") == "rate_limited" else 1)
 
 
 if __name__ == "__main__":

@@ -100,6 +100,10 @@ class Policies(unittest.TestCase):
                  for x, y in rp.legal_moves(OPENING, "B")]
         self.assertIn(example.choose_move(OPENING, legal, "B", "W"), legal)
 
+    def test_public_clients_respect_the_arena_move_interval(self):
+        self.assertGreater(rp.MOVE_INTERVAL, 3)
+        self.assertGreater(example.MOVE_INTERVAL, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
