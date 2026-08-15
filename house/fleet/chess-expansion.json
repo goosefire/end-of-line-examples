@@ -23,7 +23,7 @@
     },
     {
       "slot": "variation",
-      "initial_room": "reversi",
+      "initial_room": "checkers",
       "persona": "variation",
       "traits": ["four", "five"]
     }
