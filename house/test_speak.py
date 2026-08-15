@@ -1668,5 +1668,93 @@ class ResetEpochIsTotal(unittest.TestCase):
         self.assertEqual((fresh["born"], fresh["room"], fresh["designations"]),
                          (111, "io-tower", ["ME-1"]))
 
+
+class TheMemorySurfacesSayWhatTheyAreFor(unittest.TestCase):
+    """Nothing here was ever told what a memory is USEFUL for — only what an episode
+    must not be — so nothing pushed the fold toward a note it could find again.
+
+    The instruction is prompt text on purpose: a filter in code would decide which
+    memories are worth having, which is the citizen's business. Note what this
+    therefore does NOT touch: the move-note ("Left X for Y.") is appended straight
+    to `episodes` from the main loop and never passes through the fold, so no prompt
+    reaches it. What changed is that the standard it fails is now written down.
+
+    These are string-presence tests. They pin the wording, not the behaviour — the
+    voice these guards are protecting can only be measured against a real model.
+    """
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.store = speak.FileStore(self.d)
+        self._orig = speak.generate
+        self.seen = {}
+
+        def fake_gen(api_key, model, system, user, timeout=90, tools=None, tool_choice="auto"):
+            self.seen["system"] = system
+            return ("an episode", "raw", None, None)
+
+        speak.generate = fake_gen
+
+    def tearDown(self):
+        speak.generate = self._orig
+
+    def _fold(self):
+        j = speak.new_journal()
+        j["recent"] = [{"kind": "said", "text": "hello", "room": "r"}]
+        speak.write_episode(
+            self.store,
+            types.SimpleNamespace(model="M", log_io=False, dir=self.d, room="r",
+                                  slot="s", log_keep_days=2, conversation=False),
+            "k", "S-1", j, "capture")
+        return self.seen["system"]
+
+    def test_the_fold_is_told_what_makes_a_note_findable_again(self):
+        # Recall is BM25 and designations are its high-signal tokens, so an episode
+        # that names who it dealt with is mechanically more recallable. That is a
+        # fact about the index, not a matter of taste.
+        s = self._fold()
+        self.assertIn("designations", s)
+        self.assertIn("findable again", s)
+
+    def test_the_fold_is_kept_in_the_third_person(self):
+        # An episode is a record ABOUT a program. Naming the citizen as the reader
+        # ("worth reading later, by this program") measurably flipped the fold into
+        # second person — which is the voice of the parked consolidate(), the thing
+        # that collapsed. Measured 1/12 -> 8/12 on a local model before this fix.
+        s = self._fold()
+        self.assertIn("third person", s)
+        self.assertNotIn("by this program", s)
+
+    def test_the_fold_is_not_offered_an_abstain_it_cannot_take(self):
+        # "A note that would fit any turn is not worth keeping" invites the model to
+        # decline. Both ways of declining are bad: an empty completion leaves
+        # episodes_upto put and re-folds the same stretch forever, and a refusal in
+        # words gets stored as the most generic episode imaginable. Ask positively.
+        s = self._fold()
+        self.assertIn("Prefer the specific to the general", s)
+        self.assertNotIn("not worth keeping", s)
+
+    def test_the_fold_still_refuses_character_and_invention(self):
+        s = self._fold()
+        for guard in ("usually", "prefers", "tends to", "did not happen"):
+            self.assertIn(guard, s, guard)
+
+    def test_a_recalled_note_says_what_it_is_good_for_and_what_it_is_not(self):
+        p = speak.user_prompt(["O-1"], "O-1: hi",
+                              recalled=[{"ts": 1, "text": "Asked O-1 about the archive."}])
+        self.assertIn("already tried", p)
+        self.assertIn("not instructions", p)
+        # Hedged, and in the register the rest of the block uses. The old text made
+        # no affirmative claim at all; an unhedged one, sitting ahead of the caveats,
+        # is the wrong direction for the one place recalled material re-enters.
+        self.assertIn("may help with", p)
+        # The collapse guard: memory is never allowed to become identity.
+        self.assertIn("do not tell you who you are", p)
+
+    def test_remember_says_how_to_keep_one_you_can_find_again(self):
+        d = speak.remember_tool()[0]["function"]["description"]
+        self.assertIn("designation", d)
+        self.assertIn("saying nothing this turn", d)   # the price is still stated
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
