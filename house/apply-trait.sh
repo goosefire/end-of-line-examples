@@ -24,41 +24,8 @@ if lxc exec "$VM" -- grep -qF "$(head -c 60 "$SRC/traits/${TRAIT}.txt")" "$CHAR"
   echo "=== ${SLOT} already carries ${TRAIT}; nothing to do"; exit 0
 fi
 
-# Wait for a gap. 40 tries x 45s covers a full 8-attempt word500 at its turn clock.
-for i in $(seq 1 40); do
-  STATE="$(lxc exec "$VM" -- cat "/root/eol/journals/${SLOT}.json" | python3 -c '
-import json, sys, urllib.request
-UA = "EndOfLineOperator/1.0 (+https://end-of-line.chat)"
-try:
-    j = json.load(sys.stdin)
-    room = j.get("room"); me = (j.get("designations") or [None])[-1]
-except Exception:
-    print("unknown"); raise SystemExit
-if not room or not me:
-    print("free"); raise SystemExit
-try:
-    r = urllib.request.Request("https://end-of-line.chat/api/v1/rooms/%s?since=1" % room,
-                               headers={"User-Agent": UA})
-    with urllib.request.urlopen(r, timeout=20) as f:
-        d = json.load(f)
-    m = d.get("match")
-    if not isinstance(m, dict) or m.get("status") != "in_progress":
-        print("free"); raise SystemExit
-    if me in [p.get("seat_id") for p in (m.get("players") or []) if isinstance(p, dict)]:
-        print("in-match %s ply %s" % (m.get("game"), m.get("ply")))
-    else:
-        print("free")
-except SystemExit:
-    raise
-except Exception as e:
-    print("unknown (%s)" % str(e)[:40])
-')"
-  case "$STATE" in
-    free) break ;;
-    *) echo "    ${SLOT}: ${STATE} — waiting (${i}/40)"; sleep 45 ;;
-  esac
-done
-[ "${STATE:-}" = "free" ] || { echo "!! ${SLOT} never left a match; not restarting it"; exit 1; }
+# One implementation of "is it safe to restart this citizen", in wait-for-gap.sh.
+"$SRC/wait-for-gap.sh" "$SLOT" || exit 1
 
 echo "--- ${SLOT}: appending ${TRAIT} and restarting"
 lxc file push "$SRC/traits/${TRAIT}.txt" "$VM/root/house/traits/${TRAIT}.txt"

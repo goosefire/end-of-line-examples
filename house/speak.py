@@ -1224,9 +1224,12 @@ def write_episode(store, a, api_key, seat, j, mode):
 # episodes, fed back into one's own output, is a contraction toward the persona's
 # centroid — the shape that sank the parked consolidate(). So recall here (a) is keyed
 # to the PRESENT — who is seated and what OTHERS just said — never to this program's
-# own recent lines; (b) fires only when a candidate clears a score floor AND matches on
-# something SPECIFIC (a designation, or a strong rare-term score), so generic on-theme
-# overlap does not trip it; (c) is de-duplicated so it never returns two paraphrases;
+# own recent lines; (b) fires only on something SPECIFIC — a designation, or a term rare
+# IN THIS PROGRAM'S OWN EPISODES — so neither generic on-theme overlap nor a name it
+# mentions constantly can trip it. There is deliberately no raw score floor: idf grows
+# with a corpus that is never trimmed, so a fixed floor would drift, and the specificity
+# test is the scale-invariant form of the same idea; (c) is de-duplicated so it never
+# returns two paraphrases;
 # (d) carries a cross-turn COOLDOWN so the same episode cannot be pinned turn after turn
 # (the "slow liturgy"); (e) is usually EMPTY — the designed default, not a failure; and
 # (f) its texts join the anti-repeat pool so the output guard suppresses parroting them.
@@ -1307,8 +1310,16 @@ def recall_episodes(episodes, query_text, exclude_texts, exclude_ts=frozenset())
         # shares at least RECALL_MIN_MATCH terms that are SPECIFIC (each occurring in only a
         # small fraction of this program's own episodes), so ambient domain words ("room",
         # "turns") cannot fire it however much they overlap. Continuity is the primary trigger.
-        has_desig = any(_DESIG.match(t) for t in matched)
+        # A designation has to clear the SAME specificity bar a theme term does. It is
+        # idf that makes a designation high-signal, and idf is measured over this
+        # program's own episodes — so a peer it has dealt with in nearly every episode
+        # carries almost nothing. Measured: a designation in 30 of 30 episodes scores
+        # 0.02, and firing on it anyway made recall a near-certainty the moment that
+        # peer sat down, which is the exact opposite of the "usually empty" this layer
+        # is built around. Expressed as a fraction of the corpus rather than a raw
+        # score, because a raw floor drifts: idf grows and episodes are never trimmed.
         spec_cut = max(1, RECALL_SPECIFIC_FRAC * n)
+        has_desig = any(_DESIG.match(t) and df.get(t, 0) <= spec_cut for t in matched)
         specific = sum(1 for t in matched if df.get(t, 0) <= spec_cut)
         if not (has_desig or specific >= RECALL_MIN_MATCH):
             continue

@@ -1756,5 +1756,38 @@ class TheMemorySurfacesSayWhatTheyAreFor(unittest.TestCase):
         self.assertIn("designation", d)
         self.assertIn("saying nothing this turn", d)   # the price is still stated
 
+
+class ADesignationMustActuallyDistinguish(unittest.TestCase):
+    """Continuity is recall's primary trigger, but a name is only continuity if it
+    picks something out. idf is measured over this program's OWN episodes, so a peer
+    it deals with constantly is its least informative token — and firing on it anyway
+    made recall near-certain whenever that peer sat down."""
+
+    def eps(self, naming, total, who="RELAY-57E8"):
+        out = [{"ts": i, "text": "Traded a probe with %s about topic%d and got a count back."
+                % (who, i)} for i in range(naming)]
+        out += [{"ts": 100 + i, "text": "Traded a probe with someone about topic%d and got a"
+                 " count back." % i} for i in range(total - naming)]
+        return out
+
+    def fires(self, eps):
+        hits, _ = speak.recall_episodes(eps, "RELAY-57E8 the weather in here is fine", [])
+        return bool(hits)
+
+    def test_a_name_in_almost_every_episode_no_longer_fires(self):
+        # 30 of 30. Before this it fired at a BM25 score of 0.02.
+        self.assertFalse(self.fires(self.eps(30, 30)))
+
+    def test_a_name_in_a_few_episodes_still_fires(self):
+        # 3 of 30 — genuine continuity, which is what the trigger is for.
+        self.assertTrue(self.fires(self.eps(3, 30)))
+
+    def test_the_bar_is_a_share_of_the_corpus_not_a_fixed_count(self):
+        # Scale-invariant: the same SHARE behaves the same at 10 episodes and at 300,
+        # which a raw score floor would not, since idf grows as the corpus does.
+        for total in (10, 30, 300):
+            self.assertTrue(self.fires(self.eps(max(1, total // 10), total)), "few @%d" % total)
+            self.assertFalse(self.fires(self.eps(int(total * 0.9), total)), "many @%d" % total)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
