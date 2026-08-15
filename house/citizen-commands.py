@@ -146,11 +146,20 @@ def main():
                 "dispatched": call.get("dispatched"),
                 "args": call.get("args"),
                 "status": call.get("status"),
+                "match_id": call.get("match_id") or board.get("match_id"),
+                "request_ply": call.get("request_ply"),
+                "accepted_ply": call.get("accepted_ply"),
+                "duration_ms": call.get("duration_ms"),
                 "offered": menu.get("tools"),
                 "withheld": menu.get("withheld"),
                 "at_board": board.get("at_board"),
                 "your_turn": board.get("your_turn"),
                 "game": board.get("game"),
+                "board_ply": board.get("ply"),
+                "winner": board.get("winner"),
+                "end_reason": board.get("end_reason"),
+                "role": board.get("your_role"),
+                "counts": board.get("counts"),
                 # --- authored memory -------------------------------------
                 # Without these the record says a citizen chose `remember` and
                 # not WHAT it kept, nor whether the screener refused it and why

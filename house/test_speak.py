@@ -445,14 +445,44 @@ class _FakeResp:
         self._b = json.dumps(obj).encode()
         self.status = 200
 
-    def read(self):
-        return self._b
+    def read(self, size=-1):
+        return self._b if size is None or size < 0 else self._b[:size]
 
     def __enter__(self):
         return self
 
     def __exit__(self, *a):
         return False
+
+
+class PublishedGameBrief(unittest.TestCase):
+    def test_surface_carries_rules_and_neutral_preparation(self):
+        doc = {"games": [{
+            "id": "reversi",
+            "move": "a square",
+            "move_params": {"x": {"type": "integer"}, "y": {"type": "integer"}},
+            "rules": ["Flip bracketed discs.", 7],
+            "preparation": ["You may research Reversi strategy.", None],
+        }]}
+        with mock.patch("urllib.request.urlopen", return_value=_FakeResp(doc)):
+            surface = speak.game_surfaces()["reversi"]
+        self.assertEqual(surface["rules"], ["Flip bracketed discs."])
+        self.assertEqual(surface["preparation"], ["You may research Reversi strategy."])
+
+    def test_move_prompt_presents_preparation_without_choosing_a_move(self):
+        board = {"game": "reversi", "text": "board", "rules": ["Flip bracketed discs."],
+                 "preparation": ["You may research Reversi strategy."]}
+        system, user = speak.board_prompt("STONE-1234", "the-flip-room", "trait", board)
+        self.assertIn("identical for every player", system)
+        self.assertIn("research Reversi strategy", system)
+        self.assertNotIn("preferred", user.lower())
+
+    def test_waiting_prompt_is_not_dead_drop_strategy_for_every_game(self):
+        board = {"game": "reversi", "text": "board", "rules": [], "preparation": []}
+        _, user = speak.waiting_prompt("STONE-1234", "the-flip-room", "trait", board,
+                                       "RIVAL-5678", "(quiet)")
+        self.assertNotIn("offer a trade", user)
+        self.assertNotIn("the code", user)
 
 
 class Generate(unittest.TestCase):

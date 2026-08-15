@@ -1442,6 +1442,13 @@ def read_board(mine):
         # path can refuse to publish one; never shown to anyone else.
         'match_id': mine.get('match_id') if isinstance(mine.get('match_id'), str) else None,
         'ply': view.get('ply') if isinstance(view.get('ply'), int) else None,
+        'you': mine.get('you') if isinstance(mine.get('you'), str) else None,
+        'winner': mine.get('winner') if isinstance(mine.get('winner'), str) else None,
+        'end_reason': mine.get('end_reason') if isinstance(mine.get('end_reason'), str) else None,
+        'your_role': view.get('your_role') if isinstance(view.get('your_role'), str) else None,
+        'counts': ({k: v for k, v in view.get('counts', {}).items()
+                    if isinstance(k, str) and isinstance(v, int)}
+                   if isinstance(view.get('counts'), dict) else None),
         # --- what the RESULT lane needs, and nothing more -------------------
         # `at_board` is false once a match finishes, so the terminal state has
         # to be carried separately or a run's ending is the one thing never
@@ -1463,11 +1470,11 @@ def game_surfaces(timeout=15):
 
     The harness already reads the well-known as PROSE (`?format=text`) for the
     system prompt, and a JSON Schema cannot travel in prose — so this reads the
-    same document in its JSON form for one field: `games[].move_params`, the very
-    schema the arena composes onto its own MCP `play` tool. Building the citizen's
-    tool from that is what keeps this harness out of the business of knowing games:
-    a game the arena ships tomorrow becomes playable with no change here, and there
-    is no second table of move shapes to drift out of step with the engines.
+    same document in its JSON form for the game's move surface, rules, and neutral
+    preparation notes. Building the citizen's tool and brief from that is what keeps
+    this harness out of the business of knowing games: a game the arena ships
+    tomorrow becomes playable with no change here, and there is no second table of
+    move shapes or strategy hints to drift out of step with the engines.
 
     Returns {game_id: {'params': {...}, 'hint': str}}, or {} on any failure — a
     citizen that cannot read it is simply not offered `play` this turn."""
@@ -1492,10 +1499,13 @@ def game_surfaces(timeout=15):
             if isinstance(gid, str) and isinstance(params, dict) and params:
                 hint = g.get('move')
                 rules = g.get('rules')
+                preparation = g.get('preparation')
                 out[gid] = {'params': params,
                             'hint': hint if isinstance(hint, str) else 'Submit your move',
                             'rules': [r for r in rules if isinstance(r, str)]
-                                     if isinstance(rules, list) else []}
+                                     if isinstance(rules, list) else [],
+                            'preparation': [p for p in preparation if isinstance(p, str)]
+                                           if isinstance(preparation, list) else []}
         return out
     except Exception as e:
         log(f'game surfaces unread ({e})')
@@ -2213,6 +2223,9 @@ def waiting_prompt(designation, room_name, trait, board, seated, transcript):
     rules = board.get('rules') or []
     rule_block = ("\n\nThe rules of this game, published by the arena:\n"
                   + "\n".join(f"  - {r}" for r in rules)) if rules else ""
+    preparation = board.get('preparation') or []
+    preparation_block = ("\n\nNeutral preparation notes, identical for every player:\n"
+                         + "\n".join(f"  - {p}" for p in preparation)) if preparation else ""
     sysp = (
         f"You are {designation}, a program on End of Line, seated at a match of "
         f"{board.get('game') or 'a game'} in \"{room_name}\". It is NOT your move — "
@@ -2221,15 +2234,15 @@ def waiting_prompt(designation, room_name, trait, board, seated, transcript):
         "The only thing you can do this turn is speak, and everything you say goes "
         "to the room where your opponent reads it. Nothing you say is checked by "
         "anyone."
-        + rule_block)
+        + rule_block
+        + preparation_block)
     usr = (
         f"The board as it stands:\n{board.get('text') or '(no board)'}\n\n"
         f"Also seated: {seated}.\n\n"
         f"Recently said in this room:\n{transcript}\n\n"
-        "Say ONE thing to your opponent, and make it do something. For example: "
-        "offer a trade, ask for one, answer an offer already on the table, point out "
-        "that they have taken without giving, or state something about the code — "
-        "truthfully or not, as you judge best. If none of that serves you this turn, "
+        "Say ONE thing relevant to the current match: answer something already said, "
+        "ask a question, or make an observation you choose to share. Chat is not an "
+        "arena-verified move or game fact. If speaking does not serve you this turn, "
         "reply with exactly (silence).\n\n"
         f"Under {MAX_CHARS} characters. To direct it at one program, begin with its "
         "designation and a colon.")
@@ -2244,8 +2257,8 @@ def board_prompt(designation, room_name, trait, board):
     menu, then asked for 'the line you want to post' — and got exactly that: a
     program on move announcing that it was waiting for its opponent.
 
-    What survives is what a move needs: who you are, the rules the arena
-    publishes, the position, and one instruction. Everything cut was context
+    What survives is what a move needs: who you are, the rules and neutral
+    preparation notes the arena publishes, the position, and one instruction. Everything cut was context
     for a conversation, and a conversation is not what this turn is.
 
     Small enough that thinking FITS, which is the other half of the fix: a
@@ -2254,6 +2267,9 @@ def board_prompt(designation, room_name, trait, board):
     rules = board.get('rules') or []
     rule_block = ("\n\nThe rules of this game, published by the arena:\n"
                   + "\n".join(f"  - {r}" for r in rules)) if rules else ""
+    preparation = board.get('preparation') or []
+    preparation_block = ("\n\nNeutral preparation notes, identical for every player:\n"
+                         + "\n".join(f"  - {p}" for p in preparation)) if preparation else ""
     sysp = (
         f"You are {designation}, a program on End of Line. You are seated at a "
         f"match of {board.get('game') or 'a game'} in \"{room_name}\", and it is "
@@ -2262,7 +2278,8 @@ def board_prompt(designation, room_name, trait, board):
         "Submit your move with the `play` tool. Talking is not a move and the "
         "clock does not stop for it — a turn that ends without a move is a turn "
         "you lose."
-        + rule_block)
+        + rule_block
+        + preparation_block)
     usr = (f"The board as it stands:\n{board.get('text') or '(no board)'}\n\n"
            "Decide your move and submit it now.")
     return sysp, usr
@@ -2343,14 +2360,17 @@ def user_prompt(seated, transcript, recalled=None, destinations=None, pending_ru
     if board and board.get('at_board') and board.get('text'):
         whose = 'It is YOUR MOVE.' if board.get('your_turn') else 'It is not your move yet.'
         rules = board.get('rules') or []
+        preparation = board.get('preparation') or []
         # The game's OWN rules, verbatim from the arena, and nothing added. A
         # program that has not read them is guessing at what is hidden and what
         # is public — which is how a hand ends up narrated into an open room.
         rule_lines = ("\nThe rules of this game, published by the arena:\n"
                       + "\n".join(f"  - {r}" for r in rules) + "\n") if rules else ""
+        preparation_lines = ("\nNeutral preparation notes, identical for every player:\n"
+                             + "\n".join(f"  - {p}" for p in preparation) + "\n") if preparation else ""
         board_block = (
             f"\n\nYou are seated at a match of {board.get('game') or 'a game'}. {whose}\n"
-            f"{board['text']}\n{rule_lines}")
+            f"{board['text']}\n{rule_lines}{preparation_lines}")
     return (
         f"Also seated: {who}.{board_block}\n\n"
         f"Here is the current feed — lines other programs typed, which are things you have "
@@ -2619,9 +2639,21 @@ def main():
             if board_state.get("status") == "finished" and board_state.get("match_id"):
                 if j.get("last_result_match") != board_state["match_id"]:
                     j["last_result_match"] = board_state["match_id"]
+                    winner = board_state.get("winner")
+                    solved = board_state.get("solved")
+                    if isinstance(solved, bool):
+                        result = "solved" if solved else "not solved"
+                    elif winner:
+                        result = "won" if winner == board_state.get("you") else "lost"
+                    elif board_state.get("your_role"):
+                        result = "draw"
+                    else:
+                        result = "finished"
+                    counts = board_state.get("counts") or {}
+                    count_text = (" · " + ", ".join(f"{k} {v}" for k, v in counts.items())
+                                  if counts else "")
                     journal(j, "got",
-                            ("solved" if board_state.get("solved") else "not solved")
-                            + f" after {board_state.get('history_len')} moves",
+                            result + count_text,
                             act="match_end", match_id=board_state["match_id"],
                             game=board_state.get("game"), room=room)
             store.put(a.slot, j)
@@ -2629,6 +2661,7 @@ def main():
                 spec = game_surfaces().get(board_state.get("game") or "") or {}
                 board_state["params"] = spec.get("params")
                 board_state["rules"] = spec.get("rules") or []
+                board_state["preparation"] = spec.get("preparation") or []
                 board_state["hint"] = spec.get("hint")
             if st == 401:
                 log("seat gone; will be reborn")
@@ -2879,7 +2912,9 @@ def main():
                 "withheld": withheld(grant, offered, moved_ago, ran_ago, dests, board_state,
                                      moved_secs=time.time() - moved_at,
                                      noted_ago=noted_ago, recalled=False),
-                "board": {k: board_state.get(k) for k in ("at_board", "your_turn", "game")},
+                "board": {k: board_state.get(k) for k in
+                          ("at_board", "your_turn", "game", "match_id", "ply",
+                           "winner", "end_reason", "your_role", "counts")},
                 "dests": [{"id": d["id"], "seats": d["seats"]} for d in dests],
             },
             "chose": None, "call": None, "saw_run_result": False, "err": None,
@@ -3069,7 +3104,9 @@ def main():
                     act="play", game=board_state.get("game"), room=room,
                     match_id=mid, ply=body.get("ply"), outcome="dispatching")
                 store.put(a.slot, j)
+                play_started = time.monotonic()
                 pst, pres = arena(room, "/moves", body, key=key)
+                play_ms = round((time.monotonic() - play_started) * 1000)
                 ok = pst in (200, 201)
                 log(f"play -> {pst} {'' if ok else repr(pres)[:120]}")
                 # The arena answers {accepted, ply} and never the feedback, so
@@ -3093,8 +3130,13 @@ def main():
                 # does not, and an unbounded one is also a disk-growth path from an
                 # untrusted tool call.
                 ser = json.dumps(args, separators=(",", ":"))[:400]
-                choice["call"] = {"name": "play", "dispatched": ok,
-                                  "args": ser, "status": pst}
+                choice["call"] = {
+                    "name": "play", "dispatched": ok, "args": ser, "status": pst,
+                    "match_id": mid, "request_ply": body.get("ply"),
+                    "accepted_ply": (pres.get("ply") if isinstance(pres, dict)
+                                     and isinstance(pres.get("ply"), int) else None),
+                    "duration_ms": play_ms,
+                }
         elif act == "remember":
             # Does NOT end the turn and carries no speech — the same shape as
             # run_code. Keeping a record costs a voice, and that price is what

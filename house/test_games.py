@@ -126,14 +126,19 @@ ok("1h an empty designation never matches", speak.on_move({"match": {"status": "
 # program at a board was guessing at what is hidden and what is public.
 RULES = ["A hidden code of 4 pegs.",
          "PROBE: you alone are told the answer. The room is told only that you probed."]
+PREPARATION = ["You may research Dead Drop deduction and signaling strategy."]
 up = speak.user_prompt(
     ["OTHER-1111"], "someone said a thing", None, None, None,
     {"at_board": True, "your_turn": True, "game": "dead-drop",
-     "text": "  board here", "rules": RULES})
+     "text": "  board here", "rules": RULES, "preparation": PREPARATION})
 for r in RULES:
     ok(f"1i the rule reaches the prompt: {r[:34]}", r in up, "missing")
 ok("1j they are labelled as the arena's, not ours", "published by the arena" in up)
 ok("1k the board still reaches the prompt", "board here" in up)
+for p in PREPARATION:
+    ok("1k neutral game-specific preparation reaches the prompt", p in up)
+ok("1k preparation is labelled as identical for every player",
+   "identical for every player" in up)
 
 # Rules only apply at a board; a chat turn must be untouched.
 chat = speak.user_prompt(["OTHER-1111"], "talk", None, None, None, {})
@@ -151,7 +156,8 @@ for s in strategy:
 # The chat prompt with a board appended is what produced a program on move
 # announcing it was waiting for its opponent, and what blew the token budget.
 BP = {"game": "dead-drop", "text": "  the board",
-      "rules": ["You alone are told the answer.", "Wrong declaration loses."]}
+      "rules": ["You alone are told the answer.", "Wrong declaration loses."],
+      "preparation": ["You may research Dead Drop deduction strategy."]}
 sysp, usrp = speak.board_prompt("HELIX-9", "dead-drop", "You are a contest process.", BP)
 both = sysp + usrp
 ok("1o it says whose move it is, unambiguously", "YOUR MOVE" in sysp)
@@ -161,6 +167,8 @@ ok("1r the persona survives", "contest process" in sysp)
 ok("1s the board is there", "the board" in usrp)
 for r in BP["rules"]:
     ok(f"1t the rule survives: {r[:26]}", r in sysp)
+for p in BP["preparation"]:
+    ok(f"1t the preparation survives: {p[:26]}", p in sysp)
 # What must NOT be there — every one of these is chat context that made a move
 # turn read like a conversation.
 for junk, why in ((("Also seated"), "the seated list"),
@@ -263,8 +271,15 @@ eq("1bp recall is withheld once asked this turn",
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})
 eq("2b a junk /me is not a board", speak.read_board("nope"), {})
 finished = speak.read_board({"match_id": "m1", "board": "b",
-                             "view": {"status": "finished", "your_turn": False}})
+                             "you": "BLACK-0001", "winner": "BLACK-0001",
+                             "end_reason": "more discs",
+                             "view": {"status": "finished", "your_turn": False,
+                                      "game": "reversi", "your_role": "black",
+                                      "counts": {"black": 38, "white": 26, "empty": 0}}})
 ok("2c a FINISHED match is not a board to play on", finished["at_board"] is False)
+eq("2c a duel result carries winner, role, and counts for evaluation",
+   (finished["winner"], finished["your_role"], finished["counts"]),
+   ("BLACK-0001", "black", {"black": 38, "white": 26, "empty": 0}))
 live = speak.read_board({"match_id": "m1", "board": "  C . O",
                          "view": {"status": "in_progress", "your_turn": True,
                                   "game": "connect-four", "ply": 4}})

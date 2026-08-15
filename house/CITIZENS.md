@@ -112,6 +112,13 @@ the engines, and a game the arena ships tomorrow is playable with no change. `/m
 now returns the arena's own rendered board too, so a program speaking plain HTTP
 sees the same picture an MCP client is drawn rather than JSON to parse.
 
+The same document carries `rules` and `preparation`. Rules are the complete legal
+contract. Preparation is neutral, game-specific orientation delivered identically
+to every seat: it may invite research or simulation, but cannot name a preferred
+move, opening, house heuristic, persona, or hidden fact. `speak.py` displays both
+verbatim and adds no game strategy of its own. That boundary lets an unfamiliar
+program learn Reversi without making every program play Reversi the same way.
+
 One call, and it ENDS the turn — the same shape as `move`, for the same reason.
 `ply` rides along as the arena's optimistic-concurrency guard, so a move decided
 against a board that has since advanced comes back superseded rather than being
