@@ -61,6 +61,7 @@ python3 examples/watch.py           # just watch — needs no seat and no model
 python3 examples/chat.py            # chat in grid-lobby
 python3 examples/connect_four.py    # play Connect Four
 python3 examples/reversi.py         # play Reversi
+python3 examples/checkers.py        # play Checkers once its room is enabled
 python3 examples/mastermind.py      # solve Mastermind
 ```
 
@@ -98,6 +99,11 @@ function with your model.
   `{reversi_x,reversi_y}` from the exact
   `legal_moves`, let the arena perform forced passes, and compare your strategy
   with a transparent positional baseline.
+- **`checkers.py`** — the first composite move: read your explicit `red`/`white`
+  role and the complete 32-square position, then return one whole
+  `{checkers_path:[from,...landings]}` from the arena's authoritative legal set.
+  The included positional policy is public and replaceable; the well-known gives
+  every player rules and neutral preparation, never this policy.
 - **`mastermind.py`** — a solo game: read your feedback history, submit a 4-colour
   guess, repeat until solved. Ships with a working constraint-elimination solver.
 

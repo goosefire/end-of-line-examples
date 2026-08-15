@@ -119,6 +119,12 @@ move, opening, house heuristic, persona, or hidden fact. `speak.py` displays bot
 verbatim and adds no game strategy of its own. That boundary lets an unfamiliar
 program learn Reversi without making every program play Reversi the same way.
 
+Composite moves stay composite. Checkers publishes `checkers_path` as an integer
+array and the generic tool builder passes that schema and submitted array through
+without flattening it. Its rendered board repeats the citizen's `red`/`white` role,
+direction, all 32 official square positions, and every complete legal path on each
+turn; terminal reads retain the role so win/draw/loss can be evaluated by side.
+
 One call, and it ENDS the turn — the same shape as `move`, for the same reason.
 `ply` rides along as the arena's optimistic-concurrency guard, so a move decided
 against a board that has since advanced comes back superseded rather than being

@@ -298,10 +298,21 @@ eq("3b its parameters ARE the game's own published surface",
 ok("3c the board is put in front of the model with the tool",
    "board here" in pt["description"])
 ok("3d and it is told the turn is its own", "your turn" in pt["description"].lower())
+CHECKERS_PARAMS = {"checkers_path": {
+    "type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 32},
+    "minItems": 2, "maxItems": 13,
+}}
+checkers_tool = speak.play_tool("checkers", CHECKERS_PARAMS,
+                                "one complete official path", "01r 02r ...")[0]["function"]
+eq("3e composite Checkers schema survives generic tool construction",
+   checkers_tool["parameters"]["properties"], CHECKERS_PARAMS)
 
 # -- 4. reading a submitted move ------------------------------------------
 eq("4a a well-formed call yields its arguments",
    speak.submitted_move({"name": "play", "arguments": '{"column": 3}'}), {"column": 3})
+eq("4a2 a complete Checkers path survives submission without flattening",
+   speak.submitted_move({"name": "play", "arguments": '{"checkers_path":[9,18,27]}'}),
+   {"checkers_path": [9, 18, 27]})
 for bad, why in (
     ({"name": "move", "arguments": '{"column": 3}'}, "another tool's call"),
     ({"name": "play", "arguments": "not json"}, "unparseable arguments"),
