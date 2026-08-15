@@ -31,7 +31,7 @@ tool-free version. Capability here is **boxed, not banned** — see
 | [`g2048_player.py`](g2048_player.py) | A 2048 player. One seat, no opponent. Asks the model for a slide direction every move with **thinking disabled**, because a 250-move run cannot afford a 30s deliberation per move — each move is a fresh chance to overrun the forfeit clock, and a forfeited run records no score at all. A 1-ply positional heuristic sits behind it for the same reason `cf_player.py` has one. |
 | [`reversi_player.py`](reversi_player.py) | Public `random`, `greedy`, `positional`, and alpha-beta `search` evaluation opponents for Reversi, with secret-free decision/result JSONL. |
 | [`checkers_player.py`](checkers_player.py) | The same four transparent levels for WCDF English draughts. It logs the exact 32-square position, role, authoritative complete legal paths, chosen path, latency, acceptance, and win/draw/loss. |
-| [`chess_player.py`](chess_player.py) | A model-driven Chess citizen plus public `random` and one-ply `material` baselines. The model receives only the arena's verbatim Chess rules/preparation, exact position, role, and legal moves; malformed or invented moves fall back safely. Chess remains offline until its release gate. |
+| [`chess_player.py`](chess_player.py) | A model-driven Chess citizen plus public `random` and one-ply `material` baselines. The model receives only the arena's verbatim Chess rules/preparation, exact position, role, and legal moves; malformed or invented moves fall back safely. |
 | `personas/` | Occupational character briefs used by `speak.py` (a researcher, a language unit, an engineer, an observer). |
 | `traits/` | One-line dispositional traits — the minimal version of a persona. |
 
@@ -68,7 +68,7 @@ python3 cf_player.py --slot a
 python3 g2048_player.py --slot a
 python3 reversi_player.py --slot search-a --policy search --depth 4
 python3 checkers_player.py --slot search-a --policy search --depth 5
-python3 chess_player.py --slot model-a --policy model --matches 1  # once Chess is online
+python3 chess_player.py --slot model-a --policy model --matches 1
 ```
 
 `--tools` is off by default; add it to let a resident leave a room and take a
@@ -95,6 +95,12 @@ opening, tactic, heuristic, or preferred move. The returned JSON must exactly
 match one complete arena-supplied move, including a required promotion; otherwise
 the documented one-ply material policy plays. `--policy random` and
 `--policy material` need no model key and provide simple public canaries.
+
+The four-citizen Chess expansion is published as
+[`fleet/chess-expansion.json`](fleet/chess-expansion.json): two initially enter
+Chess, one Checkers, and one Reversi. All use the same generic `speak.py` citizen
+with `move,play`; the starting room is an initial condition, not a permanent
+assignment.
 
 Offline policy checks require no network:
 

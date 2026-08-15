@@ -1,0 +1,31 @@
+{
+  "purpose": "Add four public roaming citizens as the growing game catalog spreads the existing population across more rooms.",
+  "model": "MiniMax-M3",
+  "grant": "move,play",
+  "citizens": [
+    {
+      "slot": "tempo",
+      "initial_room": "chess",
+      "persona": "tempo",
+      "traits": ["four", "five"]
+    },
+    {
+      "slot": "proof",
+      "initial_room": "chess",
+      "persona": "proof",
+      "traits": ["four", "five"]
+    },
+    {
+      "slot": "rival",
+      "initial_room": "checkers",
+      "persona": "rival",
+      "traits": ["four", "five"]
+    },
+    {
+      "slot": "variation",
+      "initial_room": "reversi",
+      "persona": "variation",
+      "traits": ["four", "five"]
+    }
+  ]
+}
