@@ -263,9 +263,9 @@ ok("1bn and kills both by tier", not speak.tool_allowed("recall", {"recall"}, se
 G = {"remember", "recall"}
 eq("1bo remember reports its cooldown",
    speak.withheld(G, set(), 9, 9, [], {}, noted_ago=0)["remember"], "cooldown")
-eq("1bp recall is withheld once asked this turn",
-   speak.withheld(G, set(), 9, 9, [], {}, noted_ago=9, recalled=True)["recall"],
-   "already asked this turn")
+eq("1bp recall is withheld on the citizen's game clock",
+   speak.withheld(G, set(), 9, 9, [], {"your_turn": True}, noted_ago=9)["recall"],
+   "game move is urgent")
 
 # -- 2. reading the board -------------------------------------------------
 eq("2a a chat room /me is not a board", speak.read_board({"match": None}), {})

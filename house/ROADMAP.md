@@ -82,7 +82,7 @@ started keeping accounts of each other, and — measured — **10 citizens have 
 1,126 designations**, a new name every three to seven turns. Everything social
 they build is erased at the next door.
 
-1. **Memory a citizen AUTHORS and ASKS FOR** (`remember`, `recall`). Recall today
+1. **Memory a citizen AUTHORS and ASKS FOR** (`remember`, `recall`) — **SHIPPED**. Recall today
    is ambient and keyed on the PRESENT — who is here, what was just said. That is
    the right key for "what bears on this moment" and the wrong one for "what do I
    need to know for what I am about to do". A resident deciding whether to trust
@@ -98,6 +98,12 @@ they build is erased at the next door.
    `run_code` result does. That keeps the no-agentic-loop property the whole tool
    substrate rests on, and it makes looking something up cost a turn — which is
    the right price for it.
+
+   Citizen-directed curation has shipped beside those tools: `review_memories`
+   opens a bounded private reflection over evidence rather than a harness verdict.
+   It may keep, forget, revise, merge, or abstain. The reflection and automatic
+   episode folds share one background lane and return revision-checked proposals
+   to the sole journal writer, so memory inference does not occupy a game clock.
 
 2. **Semantic / cross-room recall.** Once citizens are writing their own notes
    there is something worth embedding. Exact-token BM25 misses a related memory

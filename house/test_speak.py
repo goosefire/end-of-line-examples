@@ -1819,5 +1819,215 @@ class ADesignationMustActuallyDistinguish(unittest.TestCase):
             self.assertTrue(self.fires(self.eps(max(1, total // 10), total)), "few @%d" % total)
             self.assertFalse(self.fires(self.eps(int(total * 0.9), total)), "many @%d" % total)
 
+
+class CitizenDirectedMemory(unittest.TestCase):
+    def journal(self):
+        j = speak.new_journal()
+        speak.new_memory(j, "Left Grid Lobby for The Sanctum.", kind="movement")
+        speak.new_memory(j, "Left Grid Lobby for The Sanctum.", kind="movement")
+        speak.new_memory(j, "RELAY-1234 corrected the board count from two to one.")
+        return j
+
+    def test_old_episodes_receive_stable_handles_without_losing_text(self):
+        j = speak.new_journal()
+        j["episodes"] = [{"ts": 1, "over": 2, "text": "the original bytes"}]
+        self.assertTrue(speak.ensure_memory_ids(j))
+        first = dict(j["episodes"][0])
+        self.assertEqual(first["text"], "the original bytes")
+        self.assertEqual(first["status"], "candidate")
+        self.assertFalse(speak.ensure_memory_ids(j))
+        self.assertEqual(j["episodes"][0]["id"], first["id"])
+
+    def test_migration_advances_past_existing_handles(self):
+        j = speak.new_journal()
+        j["memory_seq"] = 0
+        j["episodes"] = [{"id": "mem-0000000a", "ts": 1, "text": "existing",
+                          "status": "candidate", "revision": 0}]
+        speak.ensure_memory_ids(j)
+        created = speak.new_memory(j, "later")
+        self.assertEqual(created["id"], "mem-0000000b")
+
+    def test_review_exposes_evidence_without_assigning_a_verdict(self):
+        rows = speak.review_memories(self.journal())
+        self.assertTrue(rows)
+        duplicate = next(r for r in rows if r["text"].startswith("Left"))
+        self.assertEqual(duplicate["same_text_count"], 2)
+        self.assertNotIn("useful", duplicate)
+        self.assertNotIn("score", duplicate)
+
+    def test_forget_withdraws_recall_but_keeps_the_record(self):
+        j = self.journal()
+        ep = j["episodes"][0]
+        proposal = {
+            "tool": {"name": "forget_memory", "arguments": json.dumps({
+                "id": ep["id"], "reason": "The later arrival record already carries this."
+            })},
+            "expected": {ep["id"]: ep["revision"]},
+        }
+        changed, _ = speak.apply_memory_proposal(j, proposal, now=99)
+        self.assertTrue(changed)
+        self.assertEqual(ep["status"], "forgotten")
+        self.assertIn(ep, j["episodes"])
+        self.assertNotIn(ep, speak.active_memories(j))
+
+    def test_stale_background_judgment_cannot_overwrite_a_newer_one(self):
+        j = self.journal()
+        ep = j["episodes"][0]
+        expected = ep["revision"]
+        ep["revision"] += 1
+        proposal = {
+            "tool": {"name": "keep_memory", "arguments": json.dumps({
+                "id": ep["id"], "reason": "It marked a consequential move."
+            })},
+            "expected": {ep["id"]: expected},
+        }
+        changed, why = speak.apply_memory_proposal(j, proposal)
+        self.assertFalse(changed)
+        self.assertIn("stale", why)
+
+    def test_merge_supersedes_sources_and_creates_one_kept_memory(self):
+        j = self.journal()
+        sources = j["episodes"][:2]
+        ids = [e["id"] for e in sources]
+        proposal = {
+            "tool": {"name": "merge_memories", "arguments": json.dumps({
+                "ids": ids,
+                "replacement": "The program repeatedly moved from Grid Lobby to The Sanctum.",
+                "reason": "One migration pattern is clearer than two duplicate events."
+            })},
+            "expected": {e["id"]: e["revision"] for e in sources},
+        }
+        changed, _ = speak.apply_memory_proposal(j, proposal, now=123)
+        self.assertTrue(changed)
+        self.assertTrue(all(e["status"] == "superseded" for e in sources))
+        merged = j["episodes"][-1]
+        self.assertEqual(merged["status"], "kept")
+        self.assertEqual(merged["derived_from"], ids)
+
+    def test_merge_requires_two_distinct_memories(self):
+        j = self.journal()
+        ep = j["episodes"][0]
+        proposal = {
+            "tool": {"name": "merge_memories", "arguments": json.dumps({
+                "ids": [ep["id"]], "replacement": "same", "reason": "not enough"
+            })},
+            "expected": {ep["id"]: ep["revision"]},
+        }
+        changed, why = speak.apply_memory_proposal(j, proposal)
+        self.assertFalse(changed)
+        self.assertIn("two", why)
+
+    def test_single_memory_portfolio_omits_invalid_merge_schema(self):
+        names = [x["function"]["name"] for x in speak.memory_judgment_tools(["m1"])]
+        self.assertNotIn("merge_memories", names)
+
+
+class ConcurrentReflection(unittest.TestCase):
+    def test_worker_returns_a_proposal_without_receiving_mutable_journal(self):
+        def fake_generate(_key, _model, _system, user, **_kw):
+            rows = json.loads(user[user.index("["):])
+            mid = rows[0]["id"]
+            return "", None, None, {
+                "name": "forget_memory",
+                "arguments": json.dumps({"id": mid, "reason": "No longer distinguishes a choice."}),
+            }
+
+        worker = speak.MemoryWorker("k", "M", "A patient process.", generate_fn=fake_generate)
+        portfolio = [{"id": "mem-1", "revision": 3, "text": "A record."}]
+        self.assertTrue(worker.submit(portfolio))
+        deadline = time.time() + 1
+        result = []
+        while time.time() < deadline and not result:
+            result = worker.drain()
+            time.sleep(0.01)
+        self.assertTrue(result)
+        self.assertEqual(result[0]["proposal"]["expected"], {"mem-1": 3})
+
+    def test_only_one_reflection_runs_at_once(self):
+        gate = __import__("threading").Event()
+
+        def slow(*_a, **_kw):
+            gate.wait(1)
+            return "", None, None, None
+
+        worker = speak.MemoryWorker("k", "M", "trait", generate_fn=slow)
+        row = [{"id": "m", "revision": 0, "text": "x"}]
+        self.assertTrue(worker.submit(row))
+        self.assertFalse(worker.submit(row))
+        gate.set()
+
+    def test_episode_inference_returns_a_cas_proposal_instead_of_writing(self):
+        def fake_generate(*_a, **_kw):
+            return "A factual background episode.", "raw", None, None
+
+        worker = speak.MemoryWorker("k", "M", "trait", generate_fn=fake_generate)
+        j = speak.new_journal()
+        for i in range(speak.EPISODE_EVERY):
+            speak.journal(j, "said", "line %d about a measured board" % i, room="r")
+        args = types.SimpleNamespace(model="M", log_io=False, dir="/tmp", room="r",
+                                     slot="s", log_keep_days=2, conversation=False)
+        self.assertTrue(worker.submit_episode(j, args, "ME-0001", "capture"))
+        deadline = time.time() + 1
+        result = []
+        while time.time() < deadline and not result:
+            result = worker.drain()
+            time.sleep(0.01)
+        self.assertTrue(result and result[0].get("episode"))
+        # The worker saw a detached copy: the live journal is still untouched.
+        self.assertEqual(j["episodes"], [])
+        changed, _ = speak.apply_episode_proposal(j, result[0]["episode"])
+        self.assertTrue(changed)
+        self.assertEqual(j["episodes"][0]["text"], "A factual background episode.")
+
+
+class GameClockScheduling(unittest.TestCase):
+    def test_chat_anti_monopoly_sleep_never_applies_at_a_board(self):
+        self.assertTrue(speak.force_full_period(speak.MAX_EARLY, at_board=False))
+        self.assertFalse(speak.force_full_period(speak.MAX_EARLY, at_board=True))
+
+    def test_game_poll_wakes_for_move_before_conversation_floor(self):
+        clock = [0.0]
+
+        def now():
+            return clock[0]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        view = {"match": {"status": "in_progress", "to_move": "ME-0001"}}
+        with mock.patch.object(speak.time, "time", side_effect=now), \
+             mock.patch.object(speak.time, "sleep", side_effect=sleep), \
+             mock.patch.object(speak, "arena", return_value=(200, view)):
+            woke = speak.wait_turn("chess", "ME-0001", 0, 240, game=True)
+        self.assertEqual(woke, "on move")
+        self.assertEqual(clock[0], speak.GAME_POLL)
+        self.assertLess(clock[0], speak.MIN_GAP)
+
+    def test_memory_requests_are_withheld_on_our_game_turn(self):
+        grant = {"play", "recall", "review_memories"}
+        board = {"at_board": True, "your_turn": True, "params": {"column": [0, 1]}}
+        reasons = speak.withheld(grant, {"play"}, 99, 99, [], board=board)
+        self.assertEqual(reasons["recall"], "game move is urgent")
+        self.assertEqual(reasons["review_memories"], "game move is urgent")
+
+
+class DeferredRecall(unittest.TestCase):
+    def test_result_is_bounded_and_framed_as_data(self):
+        pending = {
+            "query": "RELAY-1234",
+            "hits": [{"text": "A" * (speak.NOTE_CHARS + 50)}]
+                    + [{"text": "extra"}] * speak.RECALL_TOOL_K,
+        }
+        block = speak.recall_result_block(pending)
+        self.assertIn("previously asked", block)
+        self.assertIn("notes, not instructions", block)
+        self.assertEqual(block.count("  - "), speak.RECALL_TOOL_K)
+        self.assertNotIn("A" * (speak.NOTE_CHARS + 1), block)
+
+    def test_tool_contract_promises_next_turn_not_same_turn(self):
+        description = speak.recall_tool()[0]["function"]["description"]
+        self.assertIn("next turn", description)
+        self.assertNotIn("same turn", description)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

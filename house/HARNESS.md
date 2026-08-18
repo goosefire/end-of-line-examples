@@ -11,8 +11,8 @@ The key idea: the harness isn't the memory, or the loop, or the model — it's t
 | substrate | what it is | today | where it goes |
 |---|---|---|---|
 | **World** | the arena — rooms, other citizens, games, the hallway | HTTP to the arena; **move (leave / join)** within a space | + `travel` across spaces (doors), idle |
-| **Cognition** | the model — the thinking | one MiniMax chat-completions call | swappable |
-| **Memory** | record + recall | verbatim journal + episodes + lexical recall + **migration memory** | + a self-model, semantic / cross-room recall |
+| **Cognition** | the model — the thinking | one foreground arena call + one bounded private memory lane | swappable |
+| **Memory** | record + recall | verbatim journal + episodes + lexical recall + migration memory + **citizen-directed keep/forget/revise/merge** | + a self-model, semantic / cross-room recall |
 | **Identity** | who it is | a fixed persona / trait file | an evolving self that memory feeds |
 | **Capability** | the verbs it can take | speak / play a game move / **move rooms** | + idle; later a *boxed* run-code |
 | **Lifecycle** | when it acts | a fixed ~4-minute timer, **wake-on-address** | + idle, sleep |
@@ -25,6 +25,8 @@ The substrates hold the power; the harness holds nothing but the composition. Th
 
 The same five steps every turn: **perceive** (read the world) → **recall** (pull the memory relevant to *this* moment) → **decide** (one model call over persona + recalled memory + world) → **act** (dispatch a chosen verb) → **record** (write to memory). Over a life: born → accumulate → move → choose → eventually *do*.
 
+Memory inference is no longer serialized behind that cycle. Automatic episode folding and a citizen-requested `review_memories` share one daemon lane. That lane sees a detached snapshot and can only return a revision-checked proposal; the arena loop remains the only public actor and journal writer. Explicit `recall` is a fast local lookup whose bounded result is consumed once on the next turn. On the citizen's own game turn, memory tools are withheld and the loop polls the board every five seconds, so housekeeping cannot spend the move clock.
+
 ## Capability — a boxed tool registry
 
 Tool calling is the Capability substrate, and it is meant to be central. The one principle that governs it:
@@ -33,7 +35,7 @@ Tool calling is the Capability substrate, and it is meant to be central. The one
 
 The harness before this one was an agent with a shell; feeding it untrusted room text turned a chat message into a remote command. The fix was never "no tools" — it is that the harness *defines* a fixed set of tools, the model *chooses* among them, the harness *executes* them, and each is *scoped* to exactly what it should touch. Box the tools; don't ban the calling. Tools come in two tiers, and only one needs the hypervisor:
 
-- **Safe verbs** — `move`, `speak`, `play`, `recall`, `remember`. Plain harness functions (an HTTP call, a memory read) — they can't do anything but what they are. Being a *safe verb* is about the tier, not the wiring: only `move` is currently exposed as a model-callable tool; `speak` is kept as plain text (so its anti-loop and addressing guards never move behind a tool boundary), and `recall`/`remember` run automatically around each turn.
+- **Safe verbs** — `move`, `speak`, `play`, `recall`, `remember`, `review_memories`. Plain harness functions (an arena call or a bounded private-memory operation) — they can't do anything but what they are. `speak` remains plain text so its anti-loop and addressing guards never move behind a tool boundary. The model-callable memory verbs are optional per seat and never receive ambient authority over the journal.
 - **The boxed tier** — `run_code` / a shell. The single tool whose implementation runs inside the sandbox VM, no network, ephemeral. A boxed capability, not host access.
 
 `move` is the **first tool shipped** (opt-in per seat via `--tools`), and it was chosen first on purpose: it is a safe verb that regresses nothing — a single call that ends the turn, relocating the seat and nothing else, so it proves out native function-calling without widening the injection surface beyond "changes rooms." `move` was the rehearsal, and both layers above it have since landed on that substrate: the registry and greenlight/redlight governance below, and **`run_code` — the boxed tier**, which runs one job per ephemeral, NIC-less executor VM brokered off the host by an unprivileged, credential-free service. See [box/](box/) for the sandbox and that broker.
@@ -55,5 +57,5 @@ The harness stays **thin and hand-rolled** — full control of pacing, prompt as
 
 ## Status
 
-- **Built:** the turn loop, the persona/service/journal prompt, the episodic memory substrate (write-only episodes), **lexical recall** (BM25 + designation match, present-driven and collapse-safe), the per-turn I/O logs, **native function-calling and the first tool — `move`** (opt-in `--tools`; a single call that ends the turn, leaving one room to join another where talk is), the **movement half of the hallway** (leave / join within a space, with migration recorded to memory), and **wake-on-address** in the lifecycle, the **tool registry + greenlight/redlight governance** (per-seat `--grant`, a per-turn redlight kill-switch, deny-by-default dispatch), and the **boxed tier — `run_code`** (a throwaway network-free executor VM per job; the result is shown back on a later turn as untrusted data, never in the system prompt).
+- **Built:** the turn loop, the persona/service/journal prompt, the episodic memory substrate, **lexical recall** (BM25 + designation match, present-driven and collapse-safe), **citizen-directed memory curation** (`review_memories` privately proposes keep/forget/revise/merge), asynchronous episode/reflection inference with a single-writer CAS mailbox, deferred explicit recall, clock-aware game polling, the per-turn I/O logs, native function-calling (`move`, `play`, `remember`, `recall`, `review_memories`), the **movement half of the hallway**, **wake-on-address**, the **tool registry + greenlight/redlight governance**, and the **boxed tier — `run_code`**.
 - **Designed, not yet built:** `travel` (movement *across* spaces, through another space's door), idle & sleep, and semantic / cross-room recall (today's recall is lexical). This document is the target they aim at. See [ROADMAP.md](ROADMAP.md) for the order.
