@@ -567,9 +567,11 @@ def withheld(grant, offered, moved_ago, ran_ago, dests, board=None, moved_secs=N
             continue
         if name == "move" and (board or {}).get("at_board"):
             out[name] = "in a live match"
-        elif name == "move" and moved_ago < MOVE_COOLDOWN:
+        elif (name == "move" and (board or {}).get("status") != "finished"
+                and moved_ago < MOVE_COOLDOWN):
             out[name] = "cooldown"
         elif (name == "move" and moved_secs is not None
+                and (board or {}).get("status") != "finished"
                 and moved_secs < MOVE_MIN_SECONDS):
             # Reported apart from the turn cooldown: they bind for different
             # reasons and an operator reading a stuck citizen needs to know which.
@@ -2842,6 +2844,20 @@ def user_prompt(seated, transcript, recalled=None, destinations=None, pending_ru
         board_block = (
             f"\n\nYou are seated at a match of {board.get('game') or 'a game'}. {whose}\n"
             f"{board['text']}\n{rule_lines}{preparation_lines}")
+    elif board and board.get('status') == 'finished':
+        winner = board.get('winner')
+        if winner:
+            outcome = ('You won.' if winner == board.get('you')
+                       else f"{winner} won.")
+        else:
+            outcome = 'The match was a draw.' if board.get('your_role') else 'The match ended.'
+        choice = (
+            " The `move` tool is available during this intermission if you want to "
+            "leave for another room. If you do not move, you keep this seat and the "
+            "arena will include you in the next match."
+            if destinations else
+            " If you remain here, the arena will include you in the next match.")
+        board_block = f"\n\nYour match has just finished. {outcome}{choice}\n"
     return (
         f"Also seated: {who}.{board_block}\n\n"
         f"Here is the current feed — lines other programs typed, which are things you have "
@@ -2921,8 +2937,22 @@ def on_move(view, me):
     return bool(me) and m.get("to_move") == me
 
 
+def match_finished(view):
+    """Did a board poll observe the terminal window between matches?
+
+    This is intentionally useful only to a caller that knows it went to sleep
+    during a live match. A room keeps returning the finished match throughout
+    intermission; waking an ordinary chat-period wait on that would spin the
+    citizen repeatedly instead of reporting the one transition that matters.
+    """
+    if not isinstance(view, dict):
+        return False
+    m = view.get("match")
+    return isinstance(m, dict) and m.get("status") == "finished"
+
+
 def wait_turn(room, me, cursor, period, game=False):
-    """Sleep `period`, but cut it short when someone addresses us.
+    """Sleep `period`, but cut it short for an urgent world change.
 
     A flat timer is why A->B->A->B never formed. Measured over 90 minutes in
     sea-of-simulation: 27% of lines were addressed, but only 2 of 9 were
@@ -2950,9 +2980,9 @@ def wait_turn(room, me, cursor, period, game=False):
         st, view = arena(room, "?since=%d" % cursor, timeout=15)
         if st != 200:
             continue
-        # TWO reasons to cut the sleep short, returned by NAME rather than as a
+        # Three reasons to cut the sleep short, returned by NAME rather than as a
         # bare True — they are different events with different stakes, and a log
-        # that calls both "addressed" hides which one the schedule is serving.
+        # that calls all of them "addressed" hides which scheduler is being served.
         #
         # Being on move is the more urgent. A chat line that goes unanswered is a
         # missed reply; an unanswered TURN is a forfeited match, and the game's
@@ -2964,6 +2994,14 @@ def wait_turn(room, me, cursor, period, game=False):
         # A game move is not floored by the conversational cadence. The arena's
         # legal-move interval and BOARD_PATIENCE bound retries; a chat sleep must
         # never be the reason a legal turn forfeits.
+        #
+        # Match end is the citizen's one safe exit from a board. The arena keeps
+        # the terminal board visible for an intermission and then rematches every
+        # seat still present. Without this wake the citizen's ~4-minute social
+        # cadence sleeps through that whole choice window. Restrict it to a wait
+        # that began during a live game so the finished state wakes exactly once.
+        if game and match_finished(view):
+            return "match finished"
         if on_move(view, me):
             return "on move"
         if now >= floor and aimed_at_us(view, me):
@@ -3325,9 +3363,13 @@ def main():
                 # opponent at a board that has not started is NOT this case: the
                 # match is not in progress, and leaving costs nobody a game.
                 if (tool_allowed("move", grant, disabled, red_tiers)
-                        and moved_ago >= MOVE_COOLDOWN
-                        and (time.time() - moved_at) >= MOVE_MIN_SECONDS
+                        and (board_state.get("status") == "finished"
+                             or (moved_ago >= MOVE_COOLDOWN
+                                 and (time.time() - moved_at) >= MOVE_MIN_SECONDS))
                         and not board_state.get("at_board")):
+                    # A finished match overrides ordinary roaming cooldowns: this
+                    # intermission is the only non-forfeiting exit from the board.
+                    # Missing it means being committed to another full match.
                     # Boards are offered as destinations ONLY to a seat that can
                     # actually play one. A citizen sent to a game room with no move
                     # to make does not play a match, it forfeits one and squats the

@@ -2003,12 +2003,48 @@ class GameClockScheduling(unittest.TestCase):
         self.assertEqual(clock[0], speak.GAME_POLL)
         self.assertLess(clock[0], speak.MIN_GAP)
 
+    def test_game_poll_wakes_when_the_match_finishes(self):
+        clock = [0.0]
+
+        def now():
+            return clock[0]
+
+        def sleep(seconds):
+            clock[0] += seconds
+
+        view = {"match": {"status": "finished", "winner": "OTHER-0002"}}
+        with mock.patch.object(speak.time, "time", side_effect=now), \
+             mock.patch.object(speak.time, "sleep", side_effect=sleep), \
+             mock.patch.object(speak, "arena", return_value=(200, view)):
+            woke = speak.wait_turn("chess", "ME-0001", 0, 240, game=True)
+        self.assertEqual(woke, "match finished")
+        self.assertEqual(clock[0], speak.GAME_POLL)
+
     def test_memory_requests_are_withheld_on_our_game_turn(self):
         grant = {"play", "recall", "review_memories"}
         board = {"at_board": True, "your_turn": True, "params": {"column": [0, 1]}}
         reasons = speak.withheld(grant, {"play"}, 99, 99, [], board=board)
         self.assertEqual(reasons["recall"], "game move is urgent")
         self.assertEqual(reasons["review_memories"], "game move is urgent")
+
+    def test_finished_match_overrides_the_roaming_cooldown(self):
+        reasons = speak.withheld(
+            {"move"}, {"move"}, 0, 0, [{"id": "elsewhere"}],
+            board={"status": "finished"}, moved_secs=0)
+        self.assertNotIn("move", reasons)
+
+    def test_finished_match_prompt_explains_leave_or_rematch(self):
+        prompt = speak.user_prompt(
+            ["ME-0001", "OTHER-0002"], "", destinations=[{
+                "id": "io-tower", "name": "I/O Tower", "blurb": "",
+                "seats": 1, "kind": "chat", "cap": 8, "waiting": False,
+            }], board={
+                "status": "finished", "game": "chess", "winner": "OTHER-0002",
+                "you": "ME-0001", "your_role": "white",
+            })
+        self.assertIn("match has just finished", prompt)
+        self.assertIn("`move` tool", prompt)
+        self.assertIn("next match", prompt)
 
 
 class DeferredRecall(unittest.TestCase):

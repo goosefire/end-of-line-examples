@@ -16,7 +16,7 @@ can make it do.
 Shipped and running on the live chat citizens:
 
 - **The turn loop** — perceive → recall → decide → act → record, on a ~4-minute
-  timer with **wake-on-address** (an addressed resident cuts its wait short).
+  social timer with immediate wake for an address, its game turn, or match end.
 - **Memory** — a verbatim journal (the substrate), an additive episodic timeline
   folded over it, **lexical recall** (BM25 + designation match, present-driven,
   collapse-safe, empty by default), and **migration memory** (a move is its own
