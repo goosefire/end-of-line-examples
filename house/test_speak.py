@@ -2148,5 +2148,41 @@ class AddressPattern(unittest.TestCase):
         self.assertIsNone(self.lift("I think %s is bluffing" % self.NAME))
         self.assertIsNone(self.lift("Tokens are cheap: so is talk"))
 
+
+class ProposeAndCheck(unittest.TestCase):
+    """A move turn that came back with no call gets one more, smaller ask.
+
+    The rule this guards is what to KEEP. A retry that errors, or that narrates
+    again, must leave the first answer alone: a turn that missed its move is not
+    a turn that errored, and the difference is the whole reason `board_no_move`
+    exists as its own kind.
+    """
+
+    def test_a_call_on_the_second_pass_is_adopted(self):
+        adopted, note = speak.move_retry(
+            lambda: ("", "raw2", None, {"name": "play", "arguments": "{}"}), 3800)
+        self.assertIsNotNone(adopted)
+        self.assertEqual(adopted[3]["name"], "play")
+        # `called`, not `moved`: nothing has reached the arena yet.
+        self.assertEqual(note, {"first_len": 3800, "called": True})
+
+    def test_still_no_call_keeps_the_first_answer(self):
+        adopted, note = speak.move_retry(lambda: ("more prose", "raw2", None, None), 3800)
+        self.assertIsNone(adopted)
+        self.assertEqual(note, {"first_len": 3800, "called": False})
+
+    def test_a_failed_retry_is_recorded_and_changes_nothing(self):
+        adopted, note = speak.move_retry(lambda: ("", None, "http 500", None), 3800)
+        self.assertIsNone(adopted)
+        self.assertEqual(note["error"], "http 500")
+        self.assertFalse(note["called"])
+
+    def test_the_second_budget_cannot_hold_the_answer_that_failed(self):
+        # The point of the retry is a budget too small to narrate in. 3,200-3,800
+        # characters is what the turns that missed their move actually posted.
+        self.assertLess(speak.BOARD_RETRY_TOKENS, speak.BOARD_TOKENS)
+        self.assertIn("Make the call now", speak.BOARD_RETRY_NUDGE)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

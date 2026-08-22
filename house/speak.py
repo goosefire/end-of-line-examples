@@ -130,6 +130,53 @@ CHAT_TOKENS = 4000
 # statement and a sentence of justification. Raising it does NOT buy an answer —
 # measured at 4,000, 6,000 and 8,000, all of which the model spent on <think>.
 BOARD_TOKENS = 1200
+# The second half of propose-and-check, which the note above names as the answer
+# when a budget is not. Small ON PURPOSE: the first call failed by having room to
+# think out loud, so the retry gets enough for a tool call and a sentence and no
+# more. A call's arguments are tens of characters.
+#
+# It caps the ANSWER, not the turn. The retry resends the whole prompt, so what it
+# bounds is narration and a second answer — one extra completion per missed move,
+# never a loop.
+BOARD_RETRY_TOKENS = 300
+BOARD_RETRY_NUDGE = (
+    "\n\nYour last answer ran out of room before you made your move, so nothing was "
+    "played and the clock is still running on this turn. The board above has not "
+    "changed. Make the call now, and do not write the reasoning out: a move turn's "
+    "prose is never posted to the room, so it is thrown away either way."
+)
+
+
+def move_retry(call, first_len):
+    """The second half of propose-and-check: ask once more, decide what to keep.
+
+    `call` makes the second completion and returns generate()'s 4-tuple. Returns
+    `(adopt_or_None, note)`. `adopt` is the tuple to take over from the first
+    answer; None means keep the first one — a retry that errors, or that still
+    does not call, must not turn a turn that merely MISSED its move into a turn
+    that errored. `note` is what the choice log records either way, because a
+    retry that failed is evidence and a silent one is not.
+
+    This does NOT vet the move. It cannot: the harness does not hold a second
+    opinion about legality, and one invented here would be wrong exactly when it
+    disagreed with the arena. What it does not need to vet is already covered
+    downstream — the dispatch acts on a call ONLY if that tool was on this turn's
+    menu, and `submitted_move` refuses unusable arguments. What is left is a
+    legal-looking move the board refuses, which costs a strike; a turn that never
+    moves at all costs the whole attempt, and there is no pass at any board here.
+    """
+    note = {"first_len": first_len}
+    r_clean, r_raw, r_err, r_tool = call()
+    # `called`, not `moved`: nothing has been submitted yet, and a field that
+    # counts a refused or superseded submission as a move would corrupt the
+    # measurement this change is judged by.
+    note["called"] = r_tool is not None
+    if r_err:
+        note["error"] = r_err
+        return None, note
+    if r_tool is None:
+        return None, note
+    return (r_clean, r_raw, r_err, r_tool), note
 # Turns to stay put after a move. ONE — a move ends the turn, so this only stops
 # a citizen moving twice without a turn in between; the real floor is the clock
 # below. Was 6, which withheld `move` on 48% of chat-room turns and left
@@ -3599,6 +3646,40 @@ def main():
             # worth reasoning about. Only the move turn trades thinking for speed.
             max_tokens=BOARD_TOKENS if board_turn else CHAT_TOKENS,
             think=not board_turn)
+
+        # PROPOSE-AND-CHECK. A move turn that comes back with no tool call is not a
+        # citizen choosing to pass — there is no pass at any board here. It is the
+        # model working the position out in the visible answer until the budget ends
+        # mid-sentence. Measured across two days of I/O logs: the turns that MOVED
+        # posted a median of 0–208 characters, and the turns that did not posted a
+        # median of 3,200–3,800 with 90% of them against the cap. It is 19–55% of
+        # every own-turn a citizen gets, at most 20 of them per citizen are transport
+        # errors, and it is the whole of the forfeit column — Reversi's 257 timeouts
+        # and Checkers' 210 are seats that were awake, on move, and narrating.
+        #
+        # BOARD_TOKENS says the answer is not a bigger number and it is right: 2,500,
+        # 4,000, 6,000 and 8,000 were all measured being spent the same way. So ask
+        # again inside a budget too small to narrate in. The question is unchanged and
+        # NO NEW INFORMATION enters the turn — the rule that a result surfaces a turn
+        # later is about tool RESULTS, and this carries none. The menu is untouched and
+        # `tool_choice` stays "auto": the operator gates the menu and the model picks
+        # from it, and forcing the call would buy a move by taking the choice away.
+        if board_turn and tool is None and not gen_err:
+            first_len = len(raw_content or "")
+            log("no call in %dB of prose; asking again for %d answer tokens"
+                % (first_len, BOARD_RETRY_TOKENS))
+            adopted, note = move_retry(
+                lambda: generate(api_key, a.model, sys_p,
+                                 stage_usr + BOARD_RETRY_NUDGE,
+                                 tools=tools, max_tokens=BOARD_RETRY_TOKENS,
+                                 think=False),
+                first_len)
+            choice["board_retry"] = note
+            if adopted:
+                clean, raw_content, _, tool = adopted
+                log("second pass moved")
+            elif note.get("error"):
+                log("retry failed (%s); the missed move stands" % note["error"])
 
         raw = clean.strip().strip('"').strip()
         # Consume the arrival note only once the model has actually received it (a
