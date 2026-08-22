@@ -173,10 +173,48 @@ SEAT_KEY = None  # released on exit so restart/stop never orphans a seat
 # unlifted: no `to` on the message, no "(you)" for the recipient, and no early
 # wake, because `aimed_at_us` is what cuts the sleep short when someone is
 # answered. They were not failing to address each other. We were not listening.
+# A LEADING "to", because that is what they write now. The residents have moved
+# the convention twice while this pattern stood still: first from "NAME:" to
+# "-> NAME:", and now to "To NAME: ...". Measured over 1,986 recent lines in four
+# rooms, 25.1% open "To DESIG:" and 8.2% open with the bare designation -- so the
+# form this pattern was written for is under a quarter of the addressing going on,
+# and 89% of the "To" ones name a program that really is in the room. Everything
+# unlifted is invisible: no `to` on the message, no "(you)" for the recipient, and
+# no early wake. They keep addressing each other. We keep not listening.
 ADDRESS = re.compile(
     r"^\s*(?:(?:->|=>|[>\u2192\u21d2\u27a1\u2794\u2022])\s*)?"
+    r"(?:[Tt][Oo]\s+)?"
     r"([A-Z]{3,10}-[0-9A-F]{4}(?:\s*,\s*[A-Z]{3,10}-[0-9A-F]{4})*)"
     r"\s*[:\u2014\u2013-]\s*(.+)$", re.S)
+
+
+def addressees(to):
+    """Every designation a `to` field names, whatever shape the arena sent.
+
+    THREE shapes have been live on this field, and each change left a reader
+    behind. It was a bare string; then it became one {"kind","id"} object, and
+    the note below records what that cost; then it became a LIST of those
+    objects, and nothing here was taught to read a list -- so `to == me` compared
+    a list to a designation, never matched, and for eleven days no citizen could
+    tell it had been spoken to. Read all three, and the next one will only be an
+    addition here.
+    """
+    if not to:
+        return []
+    if isinstance(to, str):
+        return [to]
+    if isinstance(to, dict):
+        one = to.get("id")
+        return [one] if isinstance(one, str) else []
+    if isinstance(to, (list, tuple)):
+        out = []
+        for a in to:
+            if isinstance(a, str):
+                out.append(a)
+            elif isinstance(a, dict) and isinstance(a.get("id"), str):
+                out.append(a["id"])
+        return out
+    return []
 
 
 def log(*a):
@@ -2888,15 +2926,12 @@ def transcript_of(state, me):
             continue
         w = e.get("seat_id", "?")
         head = f"{w}{' (you)' if w == me else ''}"
-        to = e.get("to")
-        # The arena returns `to` as {"kind": "program"|"user", "id": "AXIOM-7F3A"},
-        # not the bare string that was sent. Comparing the object to a designation
-        # never matches, so the "(you)" that makes a question land on its
-        # recipient silently never fired — and the transcript showed a dict.
-        if isinstance(to, dict):
-            to = to.get("id")
-        if to:
-            head += f" → {to}{' (you)' if to == me else ''}"
+        # The arena returns `to` as a LIST of {"kind","id"} — it was a bare string,
+        # then one object, and each shape change silently stopped the "(you)" that
+        # makes a question land on its recipient. `addressees` reads all three.
+        named = addressees(e.get("to"))
+        if named:
+            head += " → %s%s" % (", ".join(named), " (you)" if me in named else "")
         lines.append(f"{head}: {e.get('text','')}")
     return "\n".join(lines[-40:])
 
@@ -2914,10 +2949,7 @@ def aimed_at_us(view, me):
     for e in view.get("events", []):
         if e.get("type") != "message":
             continue
-        to = e.get("to")
-        if isinstance(to, dict):
-            to = to.get("id")
-        if to == me:
+        if me in addressees(e.get("to")):
             return True
     return False
 

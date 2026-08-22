@@ -2065,5 +2065,88 @@ class DeferredRecall(unittest.TestCase):
         self.assertIn("next turn", description)
         self.assertNotIn("same turn", description)
 
+
+class Addressing(unittest.TestCase):
+    """The `to` field has had three shapes and every change left a reader behind.
+
+    The last one cost eleven days: the arena started sending a LIST of
+    {"kind","id"} objects, `to == me` compared a list to a designation, and no
+    citizen could tell it had been spoken to. These pin all three shapes at once
+    so the next change is an addition rather than another silent outage.
+    """
+
+    ME = "AXIOM-7F3A"
+    THEM = "RELAY-57E8"
+
+    def test_every_shape_the_arena_has_ever_sent(self):
+        self.assertEqual(speak.addressees(None), [])
+        self.assertEqual(speak.addressees(""), [])
+        self.assertEqual(speak.addressees([]), [])
+        self.assertEqual(speak.addressees(self.ME), [self.ME])                  # bare string
+        self.assertEqual(speak.addressees({"kind": "program", "id": self.ME}),  # one object
+                         [self.ME])
+        self.assertEqual(speak.addressees([{"kind": "program", "id": self.ME},  # a list
+                                           {"kind": "user", "id": self.THEM}]),
+                         [self.ME, self.THEM])
+        self.assertEqual(speak.addressees([self.ME, self.THEM]), [self.ME, self.THEM])
+
+    def test_a_malformed_field_is_empty_not_an_exception(self):
+        self.assertEqual(speak.addressees(7), [])
+        self.assertEqual(speak.addressees([{"kind": "program"}, 3, None]), [])
+
+    def _view(self, to):
+        return {"events": [{"type": "message", "seat_id": self.THEM,
+                            "text": "your move?", "to": to}]}
+
+    def test_a_list_naming_us_wakes_us(self):
+        self.assertTrue(speak.aimed_at_us(
+            self._view([{"kind": "program", "id": self.ME}]), self.ME))
+
+    def test_a_list_naming_someone_else_does_not(self):
+        self.assertFalse(speak.aimed_at_us(
+            self._view([{"kind": "program", "id": self.THEM}]), self.ME))
+
+    def test_an_unaddressed_line_does_not(self):
+        self.assertFalse(speak.aimed_at_us(self._view(None), self.ME))
+
+    def test_the_transcript_shows_the_arrow_and_marks_the_recipient(self):
+        line = speak.transcript_of(
+            self._view([{"kind": "program", "id": self.ME}]), self.ME)
+        self.assertIn("\u2192 %s (you)" % self.ME, line)
+
+    def test_the_transcript_names_every_addressee(self):
+        line = speak.transcript_of(
+            self._view([{"kind": "program", "id": self.ME},
+                        {"kind": "program", "id": self.THEM}]), self.ME)
+        self.assertIn("%s, %s (you)" % (self.ME, self.THEM), line)
+
+
+class AddressPattern(unittest.TestCase):
+    """What the residents actually type. The pattern has been behind them twice."""
+
+    NAME = "RELAY-57E8"
+
+    def lift(self, raw):
+        m = speak.ADDRESS.match(raw)
+        return (m.group(1), m.group(2)) if m else None
+
+    def test_the_form_they_use_now(self):
+        self.assertEqual(self.lift("To %s: your move?" % self.NAME),
+                         (self.NAME, "your move?"))
+        self.assertEqual(self.lift("to %s: your move?" % self.NAME),
+                         (self.NAME, "your move?"))
+
+    def test_the_forms_they_used_before_still_lift(self):
+        self.assertEqual(self.lift("%s: your move?" % self.NAME),
+                         (self.NAME, "your move?"))
+        self.assertEqual(self.lift("-> %s: your move?" % self.NAME),
+                         (self.NAME, "your move?"))
+        self.assertEqual(self.lift("%s, AXIOM-7F3A: both of you" % self.NAME),
+                         ("%s, AXIOM-7F3A" % self.NAME, "both of you"))
+
+    def test_a_designation_merely_mentioned_is_not_an_address(self):
+        self.assertIsNone(self.lift("I think %s is bluffing" % self.NAME))
+        self.assertIsNone(self.lift("Tokens are cheap: so is talk"))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
