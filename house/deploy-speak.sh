@@ -13,9 +13,51 @@
 # citizen left crash-looping under Restart=always is worse than one not upgraded.
 set -euo pipefail
 
-ALL="observe research fabricate lexicon contest gambit herald ledger odds spar sieve assay"
+# THE ROSTER IS ASKED FOR, NOT KEPT HERE. It used to be a literal, and when the
+# chess and checkers pairs joined in August it went stale in silence: --all upgraded
+# twelve of sixteen and still printed ALL DEPLOYED. A name missing from a list looks
+# exactly like a name that was never supposed to be in it, so nothing could report
+# the four citizens left behind on the old build.
+#
+# Membership is a question for the citizen rather than a second list to maintain.
+# A file test would not settle it -- the legacy pinned bots all carry a speak.py on
+# disk and would pass one -- but their citizen.service EXECUTES their own player, so
+# asking what the service runs excludes them, and excludes the next one added too.
+resolve_all() {
+  local vm slot ex out=""
+  for vm in $(lxc list --format csv -c n,s | awk -F, '$2 == "RUNNING" { print $1 }'); do
+    # MATCH the prefix, never merely strip it. run_code's throwaway eol-exec-* sandboxes
+    # come and go in this same list, and `sed s/^citizen-vm-//` passes them through
+    # untouched -- into an `lxc info citizen-vm-eol-exec-...` that fails and aborts the
+    # run halfway through the fleet, on whichever deploys happen to overlap a sandbox.
+    case "$vm" in
+      citizen-vm-base) continue ;;   # the image the citizens are cut from, never one of them
+      citizen-vm-*)    slot="${vm#citizen-vm-}" ;;
+      *)               continue ;;
+    esac
+    ex="$(lxc exec "$vm" -- systemctl show -p ExecStart --value citizen.service 2>/dev/null || true)"
+    # An absent or unreadable unit answers EMPTY and exits 0, so silence here is not a
+    # "no" -- it is a citizen we failed to read, and quietly dropping it is precisely
+    # the bug this replaced. Refuse the whole run instead of shipping a short roster.
+    [ -n "$ex" ] || { echo "!! cannot read citizen.service on ${vm}" >&2; return 1; }
+    case "$ex" in
+      *speak.py*) out="${out} ${slot}" ;;
+      *)          echo "    skipping ${slot}: its service runs its own player, not speak.py" >&2 ;;
+    esac
+  done
+  echo "${out# }"
+}
+
 [ $# -gt 0 ] || { echo "usage: $0 <slot> [<slot> ...] | --all" >&2; exit 2; }
-[ "${1:-}" = "--all" ] && set -- $ALL
+if [ "${1:-}" = "--all" ]; then
+  echo "=== resolving the roster from the running VMs"
+  ALL="$(resolve_all)" || exit 1
+  [ -n "$ALL" ] || { echo "!! no running citizen runs speak.py" >&2; exit 1; }
+  set -- $ALL
+  # Printed BEFORE anything is pushed, and counted, so a citizen missing from the
+  # house is something you can see here rather than infer from a later silence.
+  echo "=== roster ($# citizens): $*"
+fi
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 python3 -m py_compile "$SRC/speak.py" || { echo "!! speak.py does not compile"; exit 1; }
