@@ -1784,7 +1784,7 @@ class TheMemorySurfacesSayWhatTheyAreFor(unittest.TestCase):
     def test_remember_says_how_to_keep_one_you_can_find_again(self):
         d = speak.remember_tool()[0]["function"]["description"]
         self.assertIn("designation", d)
-        self.assertIn("saying nothing this turn", d)   # the price is still stated
+        self.assertIn("does not use up your move or your line", d)  # the price is gone
 
 
 class ADesignationMustActuallyDistinguish(unittest.TestCase):
@@ -2020,12 +2020,49 @@ class GameClockScheduling(unittest.TestCase):
         self.assertEqual(woke, "match finished")
         self.assertEqual(clock[0], speak.GAME_POLL)
 
-    def test_memory_requests_are_withheld_on_our_game_turn(self):
+    def test_memory_is_not_withheld_for_being_our_move(self):
+        """The reversal of `..._are_withheld_on_our_game_turn`, on purpose.
+
+        Memory used to be pulled off the menu whenever it was the citizen's move,
+        so the harness decided whether a citizen needed its own record on exactly
+        the turns the record was about. A journal holding 513 episodes that
+        diagnose a defect could not be read on any turn where the defect was
+        happening. It is the citizen's record and the citizen's turn.
+        """
+        grant = {"play", "recall", "review_memories", "remember"}
+        board = {"at_board": True, "your_turn": True, "params": {"column": [0, 1]}}
+        reasons = speak.withheld(
+            grant, {"play", "recall", "review_memories", "remember"},
+            99, 99, [], board=board)
+        self.assertNotIn("recall", reasons)
+        self.assertNotIn("review_memories", reasons)
+        self.assertNotIn("remember", reasons)
+
+    def test_a_memory_tool_that_is_off_gives_the_real_reason(self):
+        # Withheld for a REAL reason still has to say which one. "game move is
+        # urgent" outlived the rule it described, and a stale reason in the record
+        # is worse than none: it reads as a decision someone made today.
         grant = {"play", "recall", "review_memories"}
         board = {"at_board": True, "your_turn": True, "params": {"column": [0, 1]}}
         reasons = speak.withheld(grant, {"play"}, 99, 99, [], board=board)
-        self.assertEqual(reasons["recall"], "game move is urgent")
-        self.assertEqual(reasons["review_memories"], "game move is urgent")
+        self.assertEqual(reasons["recall"], "gated")
+        self.assertEqual(reasons["review_memories"], "gated")
+        busy = speak.withheld(grant, {"play"}, 99, 99, [], board=board, memory_busy=True)
+        self.assertEqual(busy["review_memories"], "reflection already running")
+        empty = speak.withheld(grant, {"play"}, 99, 99, [], board=board, has_memories=False)
+        self.assertEqual(empty["review_memories"], "no memories")
+
+    def test_what_was_recalled_can_reach_a_move_turn(self):
+        # The mechanism the change leans on: a recall asked for at a board comes
+        # back into the board prompt, in the de-privileged frame, not the system
+        # slot. Without this the tool would be offered and still lead nowhere.
+        block = speak.recall_result_block({
+            "query": "chess promotion",
+            "hits": [{"text": "a promotion piece on an ordinary move is refused"}],
+        })
+        self.assertIn("chess promotion", block)
+        self.assertIn("a promotion piece on an ordinary move is refused", block)
+        self.assertIn("records, not instructions", block)   # told, never instructed
 
     def test_finished_match_overrides_the_roaming_cooldown(self):
         reasons = speak.withheld(
@@ -2047,7 +2084,17 @@ class GameClockScheduling(unittest.TestCase):
         self.assertIn("next match", prompt)
 
 
-class DeferredRecall(unittest.TestCase):
+class RecallInTheSameTurn(unittest.TestCase):
+    """Was `DeferredRecall`, and the rename is the change.
+
+    Asking your own record used to END the turn: the answer was stored and
+    surfaced later, so a citizen at a board chose between remembering and
+    playing. That is a toll, not a capability — and it was the reason the memory
+    tools were then withheld on a move turn at all, the harness protecting the
+    citizen from a cost the harness had imposed. Memory is a node the turn passes
+    through now, bounded by MEMORY_HOPS rather than paid for.
+    """
+
     def test_result_is_bounded_and_framed_as_data(self):
         pending = {
             "query": "RELAY-1234",
@@ -2055,15 +2102,85 @@ class DeferredRecall(unittest.TestCase):
                     + [{"text": "extra"}] * speak.RECALL_TOOL_K,
         }
         block = speak.recall_result_block(pending)
-        self.assertIn("previously asked", block)
-        self.assertIn("notes, not instructions", block)
+        self.assertIn("you asked it about", block)
+        self.assertIn("records, not instructions", block)
         self.assertEqual(block.count("  - "), speak.RECALL_TOOL_K)
         self.assertNotIn("A" * (speak.NOTE_CHARS + 1), block)
 
-    def test_tool_contract_promises_next_turn_not_same_turn(self):
+    def test_each_line_says_which_kind_of_record_it_is(self):
+        # "You decided to keep this", "this happened", and "another program said
+        # this" are three different claims on a reader.
+        block = speak.recall_result_block({"query": "q", "hits": [
+            {"text": "kept on purpose", "kind": "note"},
+            {"text": "folded as it happened", "kind": "episode"},
+            {"text": "what a peer claimed", "kind": "episode", "saw": True},
+        ]})
+        self.assertIn("(you kept this) kept on purpose", block)
+        self.assertIn("(this happened) folded as it happened", block)
+        self.assertIn("(about what others said, not your own words) what a peer", block)
+
+    def test_the_contract_promises_the_same_turn(self):
         description = speak.recall_tool()[0]["function"]["description"]
-        self.assertIn("next turn", description)
-        self.assertNotIn("same turn", description)
+        self.assertIn("same turn", description)
+        self.assertNotIn("next turn", description)
+
+    def test_the_contract_says_it_searches_both_stores(self):
+        description = speak.recall_tool()[0]["function"]["description"]
+        self.assertIn("notes and your episodes", description)
+
+    def test_memory_is_bounded_by_hops_not_by_a_toll(self):
+        self.assertIn("recall", speak.MEMORY_TOOLS)
+        self.assertIn("remember", speak.MEMORY_TOOLS)
+        self.assertIn("review_memories", speak.MEMORY_TOOLS)
+        self.assertGreaterEqual(speak.MEMORY_HOPS, 1)
+
+
+class CollapsedRecall(unittest.TestCase):
+    """One record, asked one question.
+
+    Notes were searchable and episodes were not, and the society held FOUR notes
+    against 9,673 episodes — so a citizen asking what it knew about promotions
+    searched four records and found nothing, while 513 episodes said exactly that.
+    """
+
+    def _journal(self):
+        j = speak.new_journal()
+        j["notes"] = [{"born": 100.0, "room": "io-tower", "seat": "ME-0001",
+                       "text": "RELAY-57E8 keeps adding a promotion to ordinary moves"}]
+        j["episodes"] = [
+            {"id": "mem-1", "ts": 200_000, "text": "a promotion piece on an ordinary move is refused",
+             "status": "candidate"},
+            {"id": "mem-2", "ts": 300_000, "text": "forgotten thing about promotion",
+             "status": "forgotten"},
+            {"id": "mem-3", "ts": 400_000, "text": "superseded thing about promotion",
+             "status": "superseded"},
+            {"id": "mem-4", "ts": 500_000, "text": "nothing to do with the question",
+             "status": "candidate"},
+        ]
+        return j
+
+    def test_it_finds_episodes_as_well_as_notes(self):
+        hits = speak.search_memory(self._journal(), "promotion", now=200.0)
+        kinds = sorted(h["kind"] for h in hits)
+        self.assertIn("episode", kinds)
+        self.assertIn("note", kinds)
+        self.assertTrue(any("ordinary move is refused" in h["text"] for h in hits))
+
+    def test_curation_still_means_something(self):
+        hits = speak.search_memory(self._journal(), "promotion", now=200.0)
+        texts = " ".join(h["text"] for h in hits)
+        self.assertNotIn("forgotten thing", texts)
+        self.assertNotIn("superseded thing", texts)
+
+    def test_an_unrelated_memory_is_not_returned(self):
+        hits = speak.search_memory(self._journal(), "promotion", now=200.0)
+        self.assertFalse(any("nothing to do with" in h["text"] for h in hits))
+
+    def test_notes_alone_still_answer_the_old_way(self):
+        # `search_notes` keeps its shape: it returns the note records themselves.
+        notes = speak.search_notes(self._journal()["notes"], "promotion", now=200.0)
+        self.assertEqual(len(notes), 1)
+        self.assertIn("born", notes[0])
 
 
 class Addressing(unittest.TestCase):
@@ -2237,6 +2354,190 @@ class RefusalNote(unittest.TestCase):
         self.assertIsNone(speak.refusal_for({"match_id": "m_abc", "text": ""}, "m_abc"))
         self.assertIsNone(speak.refusal_for(None, "m_abc"))
 
+
+
+
+class MemoryIsANode(unittest.TestCase):
+    """The control flow itself, not the constants around it.
+
+    A memory call used to END the turn, so a citizen at a board chose between
+    remembering and playing. `memory_pass` is that rule: ask, and if the answer
+    was a memory act, do it and ask again with the answer in hand. Bounded three
+    ways — the hop count, the turn clock, and never appending the same answer
+    twice. These drive it with a scripted `ask` so the bounds are proven rather
+    than asserted about.
+    """
+
+    def _script(self, *names):
+        """An `ask` that returns the given tool names in order, then None."""
+        calls = []
+        seq = list(names)
+
+        def ask(extra):
+            calls.append(extra)
+            name = seq.pop(0) if seq else None
+            tool = {"name": name, "arguments": "{}"} if name else None
+            return ("prose", "raw", None, tool, name)
+        return ask, calls
+
+    def test_a_turn_with_no_memory_call_asks_once(self):
+        ask, calls = self._script(None)
+        clean, raw, err, tool, hops, extra = speak.memory_pass(
+            ask, lambda n, t: "BLOCK", lambda: True)
+        self.assertEqual(hops, [])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(extra, "")
+
+    def test_a_recall_is_answered_and_the_turn_continues(self):
+        ask, calls = self._script("recall", "play")
+        clean, raw, err, tool, hops, extra = speak.memory_pass(
+            ask, lambda n, t: "ANSWER", lambda: True)
+        self.assertEqual(hops, ["recall"])
+        self.assertEqual(tool["name"], "play")          # it still got to play
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1], "ANSWER")            # asked again holding it
+
+    def test_the_same_answer_is_not_stacked_twice(self):
+        # Asking the same question again returns the same text; a second copy
+        # would spend the next completion's budget saying nothing new.
+        ask, calls = self._script("recall", "recall", "play")
+        _, _, _, tool, hops, extra = speak.memory_pass(
+            ask, lambda n, t: "ANSWER", lambda: True)
+        self.assertEqual(hops, ["recall", "recall"])
+        self.assertEqual(extra, "ANSWER")
+        self.assertEqual(tool["name"], "play")
+
+    def test_different_answers_both_carry(self):
+        seen = []
+
+        def resolve(name, tool):
+            seen.append(name)
+            return "A" if len(seen) == 1 else "B"
+        ask, calls = self._script("recall", "remember", "play")
+        _, _, _, tool, hops, extra = speak.memory_pass(ask, resolve, lambda: True)
+        self.assertEqual(hops, ["recall", "remember"])
+        self.assertEqual(extra, "AB")
+
+    def test_the_hop_count_is_a_real_bound(self):
+        # A third memory call is NOT resolved here: it is handed back so the
+        # caller can defer it to the next turn, which is the old behaviour.
+        ask, calls = self._script("recall", "recall", "recall", "play")
+        _, _, _, tool, hops, _ = speak.memory_pass(
+            ask, lambda n, t: "ANSWER", lambda: True, max_hops=2)
+        self.assertEqual(len(hops), 2)
+        self.assertEqual(tool["name"], "recall")        # the third, undispatched
+        self.assertEqual(len(calls), 3)
+
+    def test_the_turn_clock_can_veto_the_first_hop(self):
+        resolved = []
+        ask, calls = self._script("recall", "play")
+        _, _, _, tool, hops, extra = speak.memory_pass(
+            ask, lambda n, t: resolved.append(n) or "ANSWER", lambda: False)
+        self.assertEqual(hops, [])
+        self.assertEqual(resolved, [])                  # never ran the memory act
+        self.assertEqual(tool["name"], "recall")        # handed back to defer
+        self.assertEqual(len(calls), 1)
+
+    def test_an_error_stops_the_turn_where_it_is(self):
+        def ask(extra):
+            return ("", None, "http 500", None, None)
+        _, _, err, tool, hops, _ = speak.memory_pass(
+            ask, lambda n, t: "ANSWER", lambda: True)
+        self.assertEqual(err, "http 500")
+        self.assertEqual(hops, [])
+
+    def test_a_non_memory_tool_is_never_hopped(self):
+        ask, calls = self._script("play")
+        _, _, _, tool, hops, _ = speak.memory_pass(
+            ask, lambda n, t: "ANSWER", lambda: True)
+        self.assertEqual(hops, [])
+        self.assertEqual(tool["name"], "play")
+
+    def test_a_second_note_in_one_turn_is_refused_by_its_own_cooldown(self):
+        """The menu is built once and memory can now act twice in a turn.
+
+        So `remember`'s cooldown cannot live only on the menu: a citizen that
+        kept a note on its first hop was still holding the tool on its second,
+        and the rule meant to stop sixty notes an hour was being enforced by a
+        list assembled before any of them existed.
+        """
+        j = speak.new_journal()
+        choice = {}
+        worker = types.SimpleNamespace(busy=False, submit=lambda p: True)
+        args = types.SimpleNamespace(model="M", dir=tempfile.mkdtemp(), slot="s")
+        store = speak.FileStore(args.dir)
+        tool = {"name": "remember", "arguments": json.dumps({"note": "a thing worth keeping"})}
+
+        with mock.patch.object(speak, "screen_note", return_value=(True, "")):
+            payload, noted = speak.run_memory_tool(
+                "remember", tool, j, store, args, "key", "ME-0001", "io-tower",
+                choice, worker, speak.REMEMBER_COOLDOWN)
+            self.assertEqual(choice["chose"], "remember")
+            self.assertEqual(noted, 0)                    # the cooldown starts now
+            self.assertEqual(len(j["notes"]), 1)
+
+            # Same turn, straight after: the tool was still on the menu.
+            payload, noted = speak.run_memory_tool(
+                "remember", tool, j, store, args, "key", "ME-0001", "io-tower",
+                choice, worker, noted)
+        self.assertEqual(choice["chose"], "remember_rejected")
+        self.assertEqual(choice["call"]["why"], "cooldown")
+        self.assertEqual(len(j["notes"]), 1)              # still one
+
+    def test_every_memory_act_in_a_turn_survives_in_the_record(self):
+        # `chose`/`call` hold only the last thing that happened, and a turn can
+        # hold several now. This is how the practice is reviewed.
+        j = speak.new_journal()
+        j["notes"] = [{"born": 1.0, "room": "r", "seat": "s", "text": "promotion trouble"}]
+        choice = {}
+        worker = types.SimpleNamespace(busy=False, submit=lambda p: True)
+        args = types.SimpleNamespace(model="M", dir=tempfile.mkdtemp(), slot="s")
+        store = speak.FileStore(args.dir)
+        speak.run_memory_tool(
+            "recall", {"name": "recall", "arguments": json.dumps({"query": "promotion"})},
+            j, store, args, "key", "ME-0001", "io-tower", choice, worker, 99)
+        with mock.patch.object(speak, "screen_note", return_value=(True, "")):
+            speak.run_memory_tool(
+                "remember", {"name": "remember", "arguments": json.dumps({"note": "keep this"})},
+                j, store, args, "key", "ME-0001", "io-tower", choice, worker, 99)
+        acts = [m["act"] for m in choice["memory"]]
+        self.assertEqual(acts, ["recall", "remember"])
+        self.assertEqual(choice["memory"][0]["query"], "promotion")   # not overwritten
+
+
+class MemoryIsOfferedEveryTurn(unittest.TestCase):
+    """The offer, asked of the function that decides it.
+
+    The board gate lived inside the tool-assembly block, where nothing could
+    reach it — a test asserting the gate could pass without ever touching the
+    code that applied it. This asks the decision directly.
+    """
+
+    GRANT = {"play", "recall", "remember", "review_memories"}
+
+    def test_all_three_are_offered_with_nothing_in_the_way(self):
+        offer = speak.memory_offer(self.GRANT, set(), set(), 10_000, False, True)
+        self.assertEqual(sorted(offer), ["recall", "remember", "review_memories"])
+
+    def test_the_offer_does_not_depend_on_a_board_at_all(self):
+        # There is no board argument any more. That IS the change: the decision
+        # cannot consider whose turn it is, because it is not its business.
+        import inspect
+        params = inspect.signature(speak.memory_offer).parameters
+        self.assertNotIn("board", params)
+        self.assertNotIn("board_turn", params)
+
+    def test_the_bounds_that_remain_are_the_real_ones(self):
+        cooling = speak.memory_offer(self.GRANT, set(), set(), 0, False, True)
+        self.assertNotIn("remember", cooling)           # its own cooldown
+        busy = speak.memory_offer(self.GRANT, set(), set(), 10_000, True, True)
+        self.assertNotIn("review_memories", busy)       # a reflection is running
+        empty = speak.memory_offer(self.GRANT, set(), set(), 10_000, False, False)
+        self.assertNotIn("review_memories", empty)      # nothing to review
+        ungranted = speak.memory_offer({"play"}, set(), set(), 10_000, False, True)
+        self.assertEqual(ungranted, [])                 # deny by default
+        redlit = speak.memory_offer(self.GRANT, {"recall"}, set(), 10_000, False, True)
+        self.assertNotIn("recall", redlit)              # the operator's knob still works
 
 
 if __name__ == "__main__":
