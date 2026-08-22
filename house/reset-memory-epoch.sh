@@ -12,10 +12,17 @@
 # For the whole house, one at a time, so a failure stops at the citizen it happened
 # to rather than halfway through the fleet:
 #
-#   for s in observe research fabricate lexicon contest gambit \
-#            herald ledger odds spar sieve assay; do
+#   roster="$(./citizen-roster.sh)" || exit 1
+#   for s in $roster; do
 #     ./reset-memory-epoch.sh "$s" "fresh start for the memory layer" --push || break
 #   done
+#
+# The roster is RESOLVED FIRST, and the run refuses if it cannot be. It used to be
+# written out here as a list of names, and it silently lost the four citizens added
+# in August -- whoever ran this reset twelve of sixteen and had nothing to tell them
+# so. Note that `for s in $(./citizen-roster.sh)` would bring the same failure back
+# in a new shape: a roster that cannot be read becomes an empty loop, which does
+# nothing and says nothing.
 #
 # THE SERVICE IS STOPPED, NOT RESTARTED. A running citizen holds its whole journal in
 # memory and writes the object back at several points in a turn, so a reset landing
