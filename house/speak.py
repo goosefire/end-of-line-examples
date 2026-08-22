@@ -147,6 +147,49 @@ BOARD_RETRY_NUDGE = (
 )
 
 
+REFUSAL_CHARS = 240
+
+
+def refusal_note(args, pres):
+    """One line saying which move the board refused and what it said about it.
+
+    The arena answers a refused move with the exact reason — "submit one complete
+    move exactly as listed in legal_moves" — and until now that reached the
+    journal and stopped there, because the verbatim record is not something the
+    model is ever shown. So the citizen woke to an unchanged board with no idea
+    why, and sent the same refused move again: of 283 Chess matches carrying more
+    than one refusal, 64% spent every strike they had INSIDE ONE TURN. This is
+    the mirror of the `missed_move` notice, for the turn that did call the tool
+    and got told no.
+
+    FLATTENED, because it goes in the system prompt and it quotes the caller: the
+    move is this program's own text and some games echo the offending value back
+    in the message. A newline in there would forge a second instruction line.
+    """
+    msg = ""
+    if isinstance(pres, dict):
+        msg = pres.get("message") or pres.get("error") or ""
+    where = json.dumps(args, separators=(",", ":")) if args is not None else "your move"
+    return " ".join(("%s — %s" % (where, msg)).split())[:REFUSAL_CHARS]
+
+
+def refusal_for(stored, match_id):
+    """The refusal note to show, if it describes the board in front of us.
+
+    A citizen can be refused, lose the seat to the intermission, and wake at
+    another board entirely. A notice about a move in a finished match is noise on
+    a position that never saw it, so the note is stamped with its match and only
+    a match that still agrees gets it back. A bare string — what an older build
+    stored — has no match to agree with and is dropped.
+    """
+    if not isinstance(stored, dict) or not match_id:
+        return None
+    if stored.get("match_id") != match_id:
+        return None
+    text = stored.get("text")
+    return text if isinstance(text, str) and text else None
+
+
 def move_retry(call, first_len):
     """The second half of propose-and-check: ask once more, decide what to keep.
 
@@ -3580,6 +3623,10 @@ def main():
         missed = j.pop("missed_move", None)
         if missed:
             store.put(a.slot, j)
+        refused_move = j.pop("move_refused", None)
+        if refused_move:
+            store.put(a.slot, j)
+        refused_move = refusal_for(refused_move, board_state.get("match_id"))
         if board_turn:
             sys_p, usr_p_board = board_prompt(me, room_name, trait, board_state)
             if missed:
@@ -3590,6 +3637,13 @@ def main():
                           "submitting it, so nothing was played and the board has "
                           "not changed. Writing the move in words does not move it. "
                           "Call the play tool.")
+            if refused_move:
+                # What the BOARD said, quoted, and the one consequence that
+                # follows from it. Not advice about what to play instead — the
+                # legal moves are already in front of it.
+                sys_p += ("\n\nYour last move was not played. The board refused "
+                          f"it: {refused_move}. The position is unchanged, and "
+                          "sending that same move again will be refused again.")
         elif waiting_turn:
             sys_p, usr_p_board = waiting_prompt(
                 me, room_name, trait, board_state,
@@ -3751,6 +3805,13 @@ def main():
                 if not ok:
                     journal(j, "got", repr(pres)[:ENTRY_TEXT_MAX], act="refused",
                             match_id=mid, ply=body.get("ply"))
+                    # Tell it NEXT turn, once, exactly as a missed move is told —
+                    # but STAMPED WITH THE MATCH. A citizen can be refused, lose the
+                    # seat to the intermission, and wake at another board entirely;
+                    # a notice about a move in a finished match is noise on a
+                    # position that never saw it.
+                    j["move_refused"] = {"match_id": mid,
+                                         "text": refusal_note(args, pres)}
                 elif isinstance(pres, dict) and isinstance(pres.get("ply"), int):
                     # Trust the arena's ply over our own optimistic guess.
                     attempt["ply"] = pres["ply"]

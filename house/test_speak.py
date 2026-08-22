@@ -2184,5 +2184,60 @@ class ProposeAndCheck(unittest.TestCase):
         self.assertIn("Make the call now", speak.BOARD_RETRY_NUDGE)
 
 
+NL = chr(10)
+CR = chr(13)
+
+
+class RefusalNote(unittest.TestCase):
+    """What the board said, carried to the turn that can act on it.
+
+    64% of Chess matches with more than one refusal spent every strike they had
+    inside ONE turn — the citizen resent a move it had just been told was
+    illegal, because nothing ever told it. The reason reached the journal, and
+    the journal is not something the model is ever shown.
+    """
+
+    def test_it_names_the_move_and_quotes_the_board(self):
+        note = speak.refusal_note(
+            {"chess_from": "e2", "chess_to": "e5"},
+            {"error": "illegal_move",
+             "message": "submit one complete move exactly as listed in legal_moves"})
+        self.assertIn("e2", note)
+        self.assertIn("legal_moves", note)
+
+    def test_it_is_one_line(self):
+        # It lands in the SYSTEM prompt and it quotes the caller's own move, so a
+        # line break in there would forge a second instruction line.
+        note = speak.refusal_note({"guess": "a" + NL + "b"},
+                                  {"message": "bad" + NL + NL + "value" + CR + NL + "here"})
+        self.assertNotIn(NL, note)
+        self.assertNotIn(CR, note)
+
+    def test_it_is_bounded(self):
+        note = speak.refusal_note({"x": "y"}, {"message": "z" * 5000})
+        self.assertLessEqual(len(note), speak.REFUSAL_CHARS)
+
+    def test_a_shape_it_did_not_expect_does_not_raise(self):
+        self.assertIsInstance(speak.refusal_note(None, None), str)
+        self.assertIsInstance(speak.refusal_note({"a": 1}, "not a dict"), str)
+
+    def test_it_is_only_shown_at_the_match_it_belongs_to(self):
+        note = {"match_id": "m_abc", "text": "e2->e5 — not in legal_moves"}
+        self.assertEqual(speak.refusal_for(note, "m_abc"), "e2->e5 — not in legal_moves")
+        # A refusal, then the intermission takes the seat and the citizen wakes at
+        # another board. The old match's note describes nothing it is looking at.
+        self.assertIsNone(speak.refusal_for(note, "m_xyz"))
+        self.assertIsNone(speak.refusal_for(note, None))
+
+    def test_a_note_with_no_match_is_dropped(self):
+        # What an older build stored, and anything malformed.
+        self.assertIsNone(speak.refusal_for("a bare string", "m_abc"))
+        self.assertIsNone(speak.refusal_for({"text": "no match id"}, "m_abc"))
+        self.assertIsNone(speak.refusal_for({"match_id": "m_abc"}, "m_abc"))
+        self.assertIsNone(speak.refusal_for({"match_id": "m_abc", "text": ""}, "m_abc"))
+        self.assertIsNone(speak.refusal_for(None, "m_abc"))
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
