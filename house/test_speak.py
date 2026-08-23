@@ -811,17 +811,79 @@ class ActionMemory(unittest.TestCase):
         self.assertEqual(e["room"], "io-tower")
 
     def test_result_is_recorded_against_the_move_that_caused_it(self):
+        """Using the ply the ARENA actually sends, which is where this went wrong.
+
+        `/moves` answers with the ply of the state AFTER the move, so the FIRST
+        move of a match comes back as ply 1 — while `history[0]` is that same
+        first move. This test used to pass `ply=0`, a number the arena has never
+        sent, and so agreed with itself while every real result was filed one row
+        late. 285 of 285 recorded results on one citizen named the wrong attempt.
+        """
         j = self.j()
         speak.journal(j, "did", '{"attempt":"crane"}', act="play",
-                      match_id="m1", ply=0, outcome="pending")
+                      match_id="m1", ply=1, outcome="pending")     # the first move
         speak.reconcile_results(j, self.board())
         did = [e for e in j["recent"] if e["kind"] == "did"][0]
         got = [e for e in j["recent"] if e["kind"] == "got"]
         self.assertEqual(did["outcome"], "recorded")
         self.assertEqual(len(got), 1)
-        # ply 0 must pick row 0, not merely the most recent row.
+        self.assertEqual(got[0]["text"], '{"a":"crane"}')          # NOT "stone"
+        self.assertEqual(got[0]["ply"], 1)
+
+    def test_the_second_move_gets_the_second_row(self):
+        j = self.j()
+        speak.journal(j, "did", '{"attempt":"stone"}', act="play",
+                      match_id="m1", ply=2, outcome="pending")
+        speak.reconcile_results(j, self.board())
+        got = [e for e in j["recent"] if e["kind"] == "got"]
+        self.assertEqual(got[0]["text"], '{"a":"stone"}')
+
+    def test_a_ply_the_arena_cannot_send_is_declined(self):
+        # Ply 0 means "no move has been played". Nothing can reconcile against it.
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.reconcile_results(j, self.board())
+        self.assertEqual(j["recent"][0]["outcome"], "pending")
+        self.assertFalse([e for e in j["recent"] if e["kind"] == "got"])
+
+
+    def test_a_match_already_running_reconciles_by_ply_not_position(self):
+        """The case that would have broken on deploy.
+
+        A game that learns to keep a history mid-match has no rows for the moves
+        already played, so its first row might be ply 41. Indexing by position
+        would file that against the wrong move, or find nothing — and every match
+        in flight at deploy is in exactly this state.
+        """
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=41, outcome="pending")
+        board = {"match_id": "m1", "history_len": 1, "history_plies": [41],
+                 "history_tail": ['{"ply":41,"san":"Rxd4"}']}
+        speak.reconcile_results(j, board)
+        got = [e for e in j["recent"] if e["kind"] == "got"]
+        self.assertEqual(j["recent"][0]["outcome"], "recorded")
+        self.assertIn("Rxd4", got[0]["text"])
+        self.assertEqual(got[0]["ply"], 41)
+
+    def test_a_move_the_history_does_not_cover_stays_pending(self):
+        # Its earlier moves have no rows and never will. Pending is the honest
+        # answer; inventing a row from whatever is nearby is not.
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=7, outcome="pending")
+        board = {"match_id": "m1", "history_len": 1, "history_plies": [41],
+                 "history_tail": ['{"ply":41,"san":"Rxd4"}']}
+        speak.reconcile_results(j, board)
+        self.assertEqual(j["recent"][0]["outcome"], "pending")
+
+    def test_a_history_without_plies_still_uses_the_window(self):
+        # The guessing games publish rows that are the attempt and its result,
+        # with no ply on them. Their history has always started at row one.
+        j = self.j()
+        speak.journal(j, "did", '{"attempt":"crane"}', act="play",
+                      match_id="m1", ply=1, outcome="pending")
+        speak.reconcile_results(j, self.board())          # no history_plies at all
+        got = [e for e in j["recent"] if e["kind"] == "got"]
         self.assertEqual(got[0]["text"], '{"a":"crane"}')
-        self.assertEqual(got[0]["ply"], 0)
 
     def test_a_different_match_never_reconciles(self):
         j = self.j()
@@ -836,9 +898,17 @@ class ActionMemory(unittest.TestCase):
         speak.reconcile_results(j, self.board(hlen=2))
         self.assertEqual(j["recent"][0]["outcome"], "pending")
 
+    def test_the_row_arrives_as_soon_as_the_board_holds_it(self):
+        # ply 2 needs two rows, not three. Filing by the arena's ply made every
+        # result wait an extra turn AND land on the wrong row when it came.
+        j = self.j()
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=2, outcome="pending")
+        speak.reconcile_results(j, self.board(hlen=2))
+        self.assertEqual(j["recent"][0]["outcome"], "recorded")
+
     def test_a_row_that_scrolled_out_of_the_tail_is_marked_unseen(self):
         j = self.j()
-        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=1, outcome="pending")
         # 40 moves in, but only the last two rows are carried.
         speak.reconcile_results(j, self.board(hlen=40))
         self.assertEqual(j["recent"][0]["outcome"], "unseen")
@@ -846,14 +916,14 @@ class ActionMemory(unittest.TestCase):
 
     def test_reconciling_twice_does_not_duplicate_the_result(self):
         j = self.j()
-        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=1, outcome="pending")
         speak.reconcile_results(j, self.board())
         speak.reconcile_results(j, self.board())
         self.assertEqual(len([e for e in j["recent"] if e["kind"] == "got"]), 1)
 
     def test_a_refused_move_is_never_reconciled(self):
         j = self.j()
-        speak.journal(j, "did", "m", act="play", match_id="m1", ply=0, outcome="refused")
+        speak.journal(j, "did", "m", act="play", match_id="m1", ply=1, outcome="refused")
         speak.reconcile_results(j, self.board())
         self.assertEqual(j["recent"][0]["outcome"], "refused")
 
@@ -1443,7 +1513,7 @@ class ResultsSurviveABusyRoom(unittest.TestCase):
 
     def test_a_flood_between_the_move_and_the_answer_does_not_lose_it(self):
         j = {"recent": [], "episodes": [], "episodes_upto": 0}
-        speak.journal(j, "did", "crane", act="play", match_id="m1", ply=0, outcome="pending")
+        speak.journal(j, "did", "crane", act="play", match_id="m1", ply=1, outcome="pending")
         for i in range(speak.RECONCILE_SCAN * 3):
             speak.journal(j, "saw", f"flood {i}", who="EVIL-1", room="io-tower", seq=i)
         speak.reconcile_results(j, {"match_id": "m1", "history_len": 1,

@@ -1613,17 +1613,53 @@ def reconcile_results(j, board_state):
             continue
         if not mid or e.get("match_id") != mid or not isinstance(hlen, int):
             continue
-        idx = e.get("ply")
-        if not isinstance(idx, int) or idx >= hlen:
+        # THE ARENA'S PLY IS 1-BASED AND `history` IS NOT.
+        #
+        # `/moves` answers with the ply of the state AFTER the move — every game
+        # inits at 0 and returns `ply: s.ply + 1` — so the first move of a match
+        # comes back as ply 1. `history` is a list whose FIRST row is that same
+        # first move. Indexing it by the arena's ply therefore filed every result
+        # against the move AFTER the one that caused it, one row late, for as long
+        # as this lane has existed: measured on two citizens, 285 of 285 and 556 of
+        # 597 recorded results named an attempt the citizen made on its NEXT turn.
+        #
+        # It survived because the test that claims this property passes `ply=0` and
+        # was never checked against the producer. A fixture is not a contract.
+        ply = e.get("ply")
+        if not isinstance(ply, int) or ply < 1:
             continue
-        # The tail holds the LAST `HISTORY_TAIL` rows; translate the absolute
-        # ply into that window and decline if it has already scrolled past.
-        off = idx - (hlen - len(tail))
+        # PREFER THE ROW THAT SAYS WHICH PLY IT IS. Position only means ply when
+        # the list starts at the first move, which is not true of a match that was
+        # already running when its game learned to keep one. Where no row carries a
+        # ply — the guessing games, whose rows are the attempt and its result —
+        # fall back to the window arithmetic, which is correct for them because
+        # their history has always started at row one.
+        plies = board_state.get("history_plies")
+        off = None
+        if isinstance(plies, list) and any(p is not None for p in plies):
+            # The row that NAMES this ply, wherever it sits. Authoritative: the
+            # window arithmetic below assumes the list starts at the first move,
+            # and a match already running when its game learned to keep history
+            # does not.
+            for i, p in enumerate(plies):
+                if p == ply:
+                    off = i
+                    break
+            if off is None:
+                continue                      # no row for it yet; stay pending
+        else:
+            idx = ply - 1
+            if idx >= hlen:
+                continue                      # the board does not hold it yet
+            off = idx - (hlen - len(tail))
         if off < 0 or off >= len(tail):
             e["outcome"] = "unseen"  # correct, and beyond recovery
             continue
         e["outcome"] = "recorded"
-        journal(j, "got", tail[off], match_id=mid, ply=idx, act="result")
+        # Filed under the ply the CITIZEN acted at, not the row index it was
+        # found at, so the answer and the move that caused it pair on the same
+        # number. The row offset is bookkeeping and belongs to nobody else.
+        journal(j, "got", tail[off], match_id=mid, ply=ply, act="result")
 
 
 def write_episode(store, a, api_key, seat, j, mode, generate_fn=None):
@@ -2074,6 +2110,14 @@ def read_board(mine):
         'status': view.get('status') if isinstance(view.get('status'), str) else None,
         'solved': view.get('solved') if isinstance(view.get('solved'), bool) else None,
         'history_len': len(view['history']) if isinstance(view.get('history'), list) else None,
+        # Each row's OWN ply where the game publishes one. A match already running
+        # when a game learned to keep history has no rows for its earlier moves, so
+        # position in the list stops meaning ply — and the games that have always
+        # published a history (the guessing ones) carry no ply on a row at all.
+        # Carry both and let the reconciler prefer the fact over the accident.
+        'history_plies': ([r.get('ply') if isinstance(r, dict) else None
+                           for r in view['history'][-HISTORY_TAIL:]]
+                          if isinstance(view.get('history'), list) else None),
         'history_tail': ([json.dumps(r, separators=(',', ':'))[:HISTORY_ROW_MAX]
                           for r in view['history'][-HISTORY_TAIL:]]
                          if isinstance(view.get('history'), list) else None),
