@@ -334,9 +334,10 @@ already in the base image, mode 600, and reaches the process through
 
 Persona and traits stay **separate files** in the repo because they are the
 reusable parts, and are concatenated into one character file at deploy because
-`--trait` takes a single path. A fresh citizen's journal, choices and logs are
-cleared from the clone, or it wakes up believing it has already lived somewhere
-as somebody else.
+`--trait` takes a single path. A fresh citizen's journal, identity key, choices,
+and logs are cleared from the clone, or it wakes up believing it has already
+lived somewhere as somebody else. The new slot receives its own server-assigned
+identity on first join.
 
 ### Collecting what the society decided
 

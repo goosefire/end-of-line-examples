@@ -34,6 +34,9 @@ for _ in $(seq 1 40); do lxc exec "$VM" -- true 2>/dev/null && break; sleep 3; d
 lxc exec "$VM" -- true || { echo "!! ${VM} never came up"; exit 1; }
 
 lxc file push "$SRC/speak.py" "$VM/root/house/speak.py"
+lxc file push "$SRC/citizen_identity.py" "$VM/root/house/citizen_identity.py"
+lxc exec "$VM" -- python3 -m py_compile \
+  /root/house/speak.py /root/house/citizen_identity.py
 lxc exec "$VM" -- mkdir -p /root/house/personas /root/house/traits /root/house/characters
 lxc file push "$SRC/personas/${PERSONA}.txt" "$VM/root/house/personas/${PERSONA}.txt"
 
@@ -49,9 +52,11 @@ for tr in "${TRAITS[@]:-}"; do
   lxc exec "$VM" -- sh -c "printf '\n' >> ${CHAR}; cat /root/house/traits/${tr}.txt >> ${CHAR}"
 done
 
-# A fresh citizen must not inherit the base image's journal, or it wakes up
-# believing it has already lived somewhere as somebody else.
-lxc exec "$VM" -- sh -c "rm -rf /root/eol/journals/* /root/eol/choices/* /root/eol/logs/* 2>/dev/null; true"
+# A fresh citizen must not inherit the base image's journal OR identity key, or
+# it wakes up believing it has already lived somewhere as somebody else. The
+# arena will issue this new slot's identity on its own first join.
+lxc exec "$VM" -- sh -c "rm -rf /root/eol/journals/* /root/eol/identities/* \
+  /root/eol/choices/* /root/eol/logs/* 2>/dev/null; true"
 lxc exec "$VM" -- test -f /root/eol/minimax.env || { echo "!! ${VM} has no model key"; exit 1; }
 
 lxc exec "$VM" -- sh -c "cat > /etc/systemd/system/citizen.service <<UNIT
