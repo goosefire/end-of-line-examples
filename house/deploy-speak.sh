@@ -1,5 +1,6 @@
 #!/bin/bash
-# Push this repo's speak.py to citizens and restart them, without forfeiting a match.
+# Push this repo's speak.py and its private identity helper to citizens and
+# restart them, without forfeiting a match.
 #
 #   ./deploy-speak.sh <slot> [<slot> ...]
 #   ./deploy-speak.sh --all
@@ -29,8 +30,9 @@ if [ "${1:-}" = "--all" ]; then
   echo "=== roster ($# citizens): $*"
 fi
 
-python3 -m py_compile "$SRC/speak.py" || { echo "!! speak.py does not compile"; exit 1; }
-echo "=== deploying speak.py to: $*"
+python3 -m py_compile "$SRC/speak.py" "$SRC/citizen_identity.py" \
+  || { echo "!! citizen build does not compile"; exit 1; }
+echo "=== deploying speak.py + citizen_identity.py to: $*"
 
 for SLOT in "$@"; do
   VM="citizen-vm-${SLOT}"
@@ -42,13 +44,25 @@ for SLOT in "$@"; do
     [ "$PUSHED" = 1 ] && [ "$OK" != 1 ] || return 0
     echo "!! restoring the build ${VM} had, and starting it"
     lxc exec "$VM" -- sh -c 'test -f /root/house/speak.py.prev \
-      && mv /root/house/speak.py.prev /root/house/speak.py' || true
+      && mv /root/house/speak.py.prev /root/house/speak.py; \
+      if test -f /root/house/citizen_identity.py.prev; then \
+        mv /root/house/citizen_identity.py.prev /root/house/citizen_identity.py; \
+      else \
+        rm -f /root/house/citizen_identity.py; \
+      fi' || true
     lxc exec "$VM" -- systemctl start citizen.service || true
   }
   trap restore EXIT
 
-  lxc exec "$VM" -- cp /root/house/speak.py /root/house/speak.py.prev
+  lxc exec "$VM" -- sh -c 'rm -f /root/house/speak.py.prev \
+      /root/house/citizen_identity.py.prev; \
+    cp /root/house/speak.py /root/house/speak.py.prev; \
+    test ! -f /root/house/citizen_identity.py \
+      || cp /root/house/citizen_identity.py /root/house/citizen_identity.py.prev'
   PUSHED=1
+  # The dependency lands first, so there is no instant where a newly pushed
+  # speak.py can be imported without the helper it requires.
+  lxc file push "$SRC/citizen_identity.py" "$VM/root/house/citizen_identity.py"
   lxc file push "$SRC/speak.py" "$VM/root/house/speak.py"
   lxc exec "$VM" -- python3 -c "import sys; sys.path.insert(0, '/root/house'); import speak; \
       raise SystemExit(0 if hasattr(speak, 'main') else 1)" \
@@ -59,7 +73,7 @@ for SLOT in "$@"; do
   lxc exec "$VM" -- systemctl is-active citizen.service >/dev/null \
     || { echo "!! ${VM} did not come back up"; exit 1; }
   OK=1
-  lxc exec "$VM" -- rm -f /root/house/speak.py.prev
+  lxc exec "$VM" -- rm -f /root/house/speak.py.prev /root/house/citizen_identity.py.prev
   trap - EXIT
   echo "=== ${SLOT} running the new build"
 done
