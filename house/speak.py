@@ -32,6 +32,7 @@ Usage: speak.py --room io-tower --slot one --trait traits/one.txt [--model MiniM
 """
 import argparse, atexit, difflib, hashlib, json, math, os, queue, random, re, signal, socket, stat, struct, sys, threading, time, unicodedata, urllib.error, urllib.request
 from collections import Counter, deque
+from citizen_identity import IdentityError, join_body, load_identity, retain_identity
 
 ORIGIN = "https://end-of-line.chat"
 ARENA = f"{ORIGIN}/api/v1/rooms"
@@ -458,7 +459,8 @@ SEAT_KEY = None  # released on exit so restart/stop never orphans a seat
 ADDRESS = re.compile(
     r"^\s*(?:(?:->|=>|[>\u2192\u21d2\u27a1\u2794\u2022])\s*)?"
     r"(?:[Tt][Oo]\s+)?"
-    r"([A-Z]{3,10}-[0-9A-F]{4}(?:\s*,\s*[A-Z]{3,10}-[0-9A-F]{4})*)"
+    r"([A-Z]{3,10}-(?:[0-9A-F]{12}|[0-9A-F]{4})"
+    r"(?:\s*,\s*[A-Z]{3,10}-(?:[0-9A-F]{12}|[0-9A-F]{4}))*)"
     r"\s*[:\u2014\u2013-]\s*(.+)$", re.S)
 
 
@@ -708,7 +710,7 @@ def new_journal():
     # `room` is the last room the citizen held a seat in — persisted so a restart
     # resumes there rather than teleporting back to the launch --room (which would
     # orphan a roamed seat). None until the first join binds it.
-    return {"born": None, "carried": "", "recent": [], "designations": [],
+    return {"born": None, "identity": None, "carried": "", "recent": [], "designations": [],
             "episodes": [], "episodes_upto": 0, "memory_seq": 0, "room": None}
 
 
@@ -723,10 +725,9 @@ def reset_epoch(j, reason, now=None):
 
     What carries over is everything that is NOT memory:
 
-      born, designations   identity. Every designation it has ever held, because
-                           recall excludes its own past lives from a query by name,
-                           and a citizen that forgot its old names would start
-                           keying recall on itself.
+      born, identity,      identity. `identity` is the stable server-assigned name;
+      designations         designations also retains pre-continuity aliases so
+                           recall never starts keying on the citizen's own history.
       room                 where it is sitting, so a restart resumes there rather
                            than teleporting to the launch --room and orphaning a seat.
       last_result_match,   bookkeeping about what has ALREADY been written down, not
@@ -747,6 +748,8 @@ def reset_epoch(j, reason, now=None):
     fresh = new_journal()
     born = j.get("born")
     fresh["born"] = born if isinstance(born, int) and not isinstance(born, bool) else None
+    identity = j.get("identity")
+    fresh["identity"] = identity if isinstance(identity, str) else None
     d = j.get("designations")
     fresh["designations"] = [x for x in d if isinstance(x, str)] if isinstance(d, list) else []
     room = j.get("room")
@@ -1839,7 +1842,7 @@ _STOP = frozenset(
     "not no so do does did has have had will would can could should just now here there "
     "what who how why when where which while into over out up down off about your you're "
     "than them too very dont don also more most some any all one two".split())
-_DESIG = re.compile(r"[A-Z]{3,10}-[0-9A-F]{4}")
+_DESIG = re.compile(r"[A-Z]{3,10}-(?:[0-9A-F]{12}|[0-9A-F]{4})")
 _WORD = re.compile(r"[A-Za-z0-9]{3,}")
 
 
@@ -1948,8 +1951,8 @@ def present_query(events, seated, mine):
 # ------------------------------------------------------------- moving --
 # `move` is the harness's first and only tool. A single call ENDS the turn: the
 # loop leaves the seat, points at the chosen room, and re-joins there next
-# iteration (a new designation comes with the new seat — the arena's own `move`
-# flow: leave + join). No agentic loop, and no tool result is fed back; `say`
+# iteration (the retained identity carries the same designation to the new seat
+# through the arena's own leave + join flow). No agentic loop, and no tool result is fed back; `say`
 # stays plain text through the guarded pipeline. See generate()'s security note.
 
 def _note_key(text):
@@ -2289,7 +2292,7 @@ def move_tool(dests):
             "name": "move",
             "description": (
                 "Leave your seat in this room and take one in another room of this arena. "
-                "A single move ENDS your turn, and a new designation comes with the new seat. "
+                "A single move ENDS your turn. Your retained identity carries the same designation to the new seat. "
                 "Use it to follow the conversation when talk here has thinned, or to take a "
                 "free seat at a game — a board listed as waiting for an opponent has a program "
                 "already sitting at it, and the match begins on its own once you sit down. "
@@ -3481,6 +3484,12 @@ def main():
     service, service_at = brief(), time.time()
     store = FileStore(a.dir)
     tokpath = os.path.join(a.dir, "journals", f"{a.slot}.token")
+    identity_label = f"citizen-{a.slot}"
+    try:
+        identity_key = load_identity(a.dir, identity_label)
+    except IdentityError as e:
+        log(f"identity unavailable: {e}; refusing to start a different life")
+        sys.exit(2)
 
     j = store.get(a.slot) or new_journal()
     for k, v in new_journal().items():
@@ -3518,7 +3527,7 @@ def main():
     # `me` as "?" meant a restarted program did not know its own designation: it was
     # told "You are ?", could not tell which lines in the feed were its own, and was
     # listed in `seated` as its own neighbour.
-    me = j["designations"][-1] if j.get("designations") else "?"
+    me = j.get("identity") or (j["designations"][-1] if j.get("designations") else "?")
     early = 0  # consecutive early wakes, capped by MAX_EARLY
     # ts of episodes recalled in the last RECALL_COOLDOWN turns — excluded from recall so
     # one episode cannot be pinned turn after turn. In-process only: it governs consecutive
@@ -3638,17 +3647,32 @@ def main():
                 board_state["preparation"] = spec.get("preparation") or []
                 board_state["hint"] = spec.get("hint")
             if st == 401:
-                log("seat gone; will be reborn")
+                log("seat gone; will rejoin under the retained identity")
                 key = None
         if not key:
-            st, jr = arena(room, "/join", {"meta": {"model": a.model, "vendor": "house"}})
+            st, jr = arena(room, "/join", join_body(
+                {"model": a.model, "vendor": "house"}, identity_key))
             # A 201 with a well-formed {seat_token, seat_id} is the only success. A
             # non-201, or a 201 whose body is not a dict or lacks usable string seat
             # fields, is a failed join: pull any error out defensively (jr may not be a
             # dict) and retry, never index a malformed body and raise out of the loop.
             seat = joined_seat(jr) if st == 201 else None
+            identity_error = None
+            if seat is not None:
+                try:
+                    identity_key = retain_identity(
+                        a.dir, identity_label, identity_key, jr)
+                except IdentityError as e:
+                    identity_error = str(e)
+                    # The join did create a seat. Release it before refusing a
+                    # malformed continuity result so capacity is not orphaned.
+                    try:
+                        arena(room, "/leave", {}, key=seat[0], timeout=5)
+                    except Exception:
+                        pass
+                    seat = None
             if seat is None:
-                err = jr.get("error") if isinstance(jr, dict) else repr(jr)[:120]
+                err = identity_error or (jr.get("error") if isinstance(jr, dict) else repr(jr)[:120])
                 log(f"join failed {st} {err} at {room}")
                 # If we just moved and the destination will not take us (offline race,
                 # reaped room, 5xx), don't wedge retrying a dead room forever — revert
@@ -3675,6 +3699,15 @@ def main():
                 log(f"reseated as {me} in {room} (carrying {len(j['recent'])})")
             if me not in j["designations"]:
                 j["designations"].append(me)
+            prior_identity = j.get("identity")
+            if prior_identity and prior_identity != me:
+                log(f"identity mismatch: retained {prior_identity}, server returned {me}; refusing continuity break")
+                try:
+                    arena(room, "/leave", {}, key=key, timeout=5)
+                finally:
+                    key, SEAT_KEY = None, None
+                sys.exit(2)
+            j["identity"] = me
             j["room"] = room
             # A move only becomes durable HERE, once the destination seat is actually held:
             # write the move-episode (so the migrating persona remembers its migration) and
@@ -3713,8 +3746,8 @@ def main():
         # OTHERS just said — never from our own lines, and only when others have actually
         # spoken (nothing to reach back FROM otherwise). Non-fatal and usually empty; on any
         # failure the turn proceeds verbatim-only, exactly as before this layer existed.
-        # Exclude ALL of this program's own designations (it may have held several across
-        # rebirths), not just the current `me`, so its own prior-life lines can never
+        # Exclude ALL of this program's own designations (including legacy
+        # pre-continuity aliases), not just the current `me`, so its own earlier lines can never
         # re-enter the query and make recall self-referential — the contraction this layer
         # is built to avoid.
         mine = set(j.get("designations", [])) | {me}

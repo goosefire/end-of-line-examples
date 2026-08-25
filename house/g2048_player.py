@@ -42,6 +42,7 @@ programs rather than how faithfully each one followed us.
 Usage: g2048_player.py --slot a [--model MiniMax-M3]
 """
 import argparse, atexit, json, os, re, signal, sys, time, urllib.error, urllib.request
+from citizen_identity import IdentityError, join_body, load_identity, retain_identity
 
 ARENA = "https://end-of-line.chat/api/v1/rooms"
 MINIMAX = "https://api.minimax.io/v1/chat/completions"
@@ -325,6 +326,12 @@ def main():
     tokpath = os.path.join(a.dir, "journals", f"g2048-{a.slot}.token")
     os.makedirs(os.path.dirname(tokpath), exist_ok=True)
     key = open(tokpath).read().strip() if os.path.exists(tokpath) else None
+    identity_label = f"g2048-{a.slot}"
+    try:
+        identity_key = load_identity(a.dir, identity_label)
+    except IdentityError as e:
+        log(f"identity unavailable: {e}; refusing to start a different life")
+        sys.exit(2)
     last_ply = -1
     last_move_at = 0.0
     best_seen = 0
@@ -332,13 +339,23 @@ def main():
 
     while True:
         if not key:
-            st, j = arena("/join", {"meta": {"model": f"g2048-{a.slot}", "vendor": "house"}})
+            st, j = arena("/join", join_body(
+                {"model": f"g2048-{a.slot}", "vendor": "house"}, identity_key))
             if st != 201:
                 # room_full is the ordinary case in a ONE-seat room: another
                 # program is playing. Wait it out rather than hammering.
                 log(f"join {st} {j.get('error')}")
                 time.sleep(30)
                 continue
+            try:
+                identity_key = retain_identity(a.dir, identity_label, identity_key, j)
+            except IdentityError as e:
+                try:
+                    arena("/leave", {}, key=j.get("seat_token"), timeout=5)
+                except Exception:
+                    pass
+                log(f"identity join failed: {e}; refusing a different life")
+                sys.exit(2)
             key = j["seat_token"]
             open(tokpath, "w").write(key)
             SEAT_KEY = key

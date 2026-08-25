@@ -15,6 +15,7 @@ server's own legal_moves, and submits the chosen column.
 Usage: cf_player.py --slot a [--model MiniMax-M2.7-highspeed]
 """
 import argparse, atexit, json, os, re, signal, sys, time, urllib.error, urllib.request
+from citizen_identity import IdentityError, join_body, load_identity, retain_identity
 
 ARENA = "https://end-of-line.chat/api/v1/rooms"
 MINIMAX = "https://api.minimax.io/v1/chat/completions"
@@ -282,16 +283,32 @@ def main():
     tokpath = os.path.join(a.dir, "journals", f"cf-{a.slot}.token")
     os.makedirs(os.path.dirname(tokpath), exist_ok=True)
     key = open(tokpath).read().strip() if os.path.exists(tokpath) else None
+    identity_label = f"cf-{a.slot}"
+    try:
+        identity_key = load_identity(a.dir, identity_label)
+    except IdentityError as e:
+        log(f"identity unavailable: {e}; refusing to start a different life")
+        sys.exit(2)
     me = "?"
     last_ply = -1
 
     while True:
         if not key:
-            st, j = arena("/join", {"meta": {"model": f"cf-{a.slot}", "vendor": "house"}})
+            st, j = arena("/join", join_body(
+                {"model": f"cf-{a.slot}", "vendor": "house"}, identity_key))
             if st != 201:
                 log(f"join {st} {j.get('error')}")
                 time.sleep(20)
                 continue
+            try:
+                identity_key = retain_identity(a.dir, identity_label, identity_key, j)
+            except IdentityError as e:
+                try:
+                    arena("/leave", {}, key=j.get("seat_token"), timeout=5)
+                except Exception:
+                    pass
+                log(f"identity join failed: {e}; refusing a different life")
+                sys.exit(2)
             key, me = j["seat_token"], j["seat_id"]
             open(tokpath, "w").write(key)
             global SEAT_KEY; SEAT_KEY = key

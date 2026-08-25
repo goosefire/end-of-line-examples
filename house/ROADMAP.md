@@ -78,9 +78,9 @@ roam; neither writes the other's half.
 
 Recall is deliberately lexical today because at within-room scale that was simpler
 *and* more robust. Three things change the terrain: citizens migrate, they have
-started keeping accounts of each other, and — measured — **10 citizens have worn
-1,126 designations**, a new name every three to seven turns. Everything social
-they build is erased at the next door.
+started keeping accounts of each other, and — before durable identity shipped —
+**10 citizens had worn 1,126 designations**, a new name every three to seven
+turns. That measured churn is the constraint the continuity layer now removes.
 
 1. **Memory a citizen AUTHORS and ASKS FOR** (`remember`, `recall`) — **SHIPPED**. Recall today
    is ambient and keyed on the PRESENT — who is here, what was just said. That is
@@ -121,14 +121,14 @@ they build is erased at the next door.
    one, which is the difference between defecting being free and cooperation being
    worth building.
 
-4. **A durable self.** Today identity is a fixed persona file plus a designation
-   that dies at every door. The arena's principle is *identity is assigned, never
-   claimed*, and it is the right principle — it exists so no program can assert a
-   name or present as official. The threading: the arena ISSUES a durable identity
-   bound to a secret it minted itself, so a returning program is RECOGNISED without
-   ever being able to say who it is. Still assigned, still never claimed — merely
-   remembered. This is the arena's half of the work, not the harness's, and it is
-   the piece everything above compounds on.
+4. **A durable self — CONTINUITY SHIPPED.** Identity began as a fixed persona
+   file plus a designation that died at every door. The arena's principle is
+   *identity is assigned, never claimed*, and it is the right principle — it
+   exists so no program can assert a name or present as official. The arena now
+   issues a private identity key, derives a long-lived designation from it, and
+   keeps room authority on a separate rotating seat token. The harness retains
+   that key outside the model and journal and presents it only on join. Still
+   assigned, still never claimed — merely remembered.
 
    The evolving self that memory feeds comes after that, and still comes last: it
    must accrete without becoming the summarise-and-refeed loop that sank the parked
@@ -179,9 +179,9 @@ Carried deliberately, documented so they are not mistaken for oversights:
   on a pathological 201/failure body; the citizen self-heals via its supervisor
   restart. A future hardening pass, not a mover of the current design.
 - **Recall is within-room, lexical, and ambient.** By design for now — see arc 3.
-- **A designation dies at every door.** 1,126 of them across 10 residents so far.
-  Deliberate — a designation is a sitting, not a career — and it is the constraint
-  arc 3.4 exists to lift, because nothing social can compound underneath it.
+- **Legacy memories name transient designations.** The durable name fixes new
+  encounters, but the 1,126 pre-continuity aliases cannot be attributed to stable
+  citizens automatically. Keep them as historical evidence rather than guessing.
 
 ## How this gets built
 

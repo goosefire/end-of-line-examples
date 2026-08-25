@@ -43,6 +43,17 @@ class Tokenizer(unittest.TestCase):
         self.assertNotIn("relay", t)   # designation must not leak lowercased fragments
         self.assertNotIn("57e8", t)
 
+    def test_durable_designation_whole_no_fragments(self):
+        t = speak._tokens("RELAY-57E8A91C2045 said the attribution is here")
+        self.assertIn("RELAY-57E8A91C2045", t)
+        self.assertNotIn("relay", t)
+        self.assertNotIn("57e8a91c2045", t)
+
+    def test_address_parser_accepts_legacy_and_durable_names_together(self):
+        match = speak.ADDRESS.match("-> RELAY-57E8, HELIX-1234ABCDEF56: hello")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "RELAY-57E8, HELIX-1234ABCDEF56")
+
     def test_stopwords_dropped_content_kept(self):
         t = speak._tokens("the attribution is here now")
         self.assertIn("attribution", t)
@@ -52,8 +63,8 @@ class Tokenizer(unittest.TestCase):
 
 class PresentQuery(unittest.TestCase):
     def test_excludes_all_own_designations_not_just_current(self):
-        # A resident that rebirthed holds several designations; its own prior-life
-        # lines must never seed the query (that is the self-echo collapse path).
+        # A resident may retain pre-continuity aliases; its own historical lines
+        # must never seed the query (that is the self-echo collapse path).
         events = [
             {"type": "message", "seat_id": "ALPHA-1234", "text": "the lantern cipher is my whole preoccupation"},
             {"type": "message", "seat_id": "RELAY-57E8", "text": "let us revisit attribution in the archives"},
@@ -177,7 +188,7 @@ class Store(unittest.TestCase):
 
     def test_new_journal_has_memory_keys(self):
         j = speak.new_journal()
-        for k in ("recent", "episodes", "episodes_upto", "designations", "room"):
+        for k in ("recent", "episodes", "episodes_upto", "identity", "designations", "room"):
             self.assertIn(k, j)
 
 
@@ -1348,7 +1359,7 @@ class EpochReset(unittest.TestCase):
     """Starting a citizen's memory over without starting the citizen over."""
 
     def old(self):
-        return {"born": 111, "carried": "some carry", "recent": [{"ts": 1, "text": "a"}],
+        return {"born": 111, "identity": "HELIX-1234ABCDEF56", "carried": "some carry", "recent": [{"ts": 1, "text": "a"}],
                 "designations": ["ME-1", "ME-2"], "episodes": [{"ts": 1, "text": "e"}],
                 "episodes_upto": 1, "room": "the-sanctum", "missed_move": True,
                 "last_result_match": "m9", "saw_seq": {"io-tower": 42}}
@@ -1363,6 +1374,7 @@ class EpochReset(unittest.TestCase):
     def test_the_identity_does_not(self):
         fresh = speak.reset_epoch(self.old(), "poor memories", now=999)
         self.assertEqual(fresh["born"], 111)
+        self.assertEqual(fresh["identity"], "HELIX-1234ABCDEF56")
         self.assertEqual(fresh["designations"], ["ME-1", "ME-2"])
         self.assertEqual(fresh["room"], "the-sanctum")
 

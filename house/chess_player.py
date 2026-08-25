@@ -25,6 +25,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from citizen_identity import IdentityError, join_body, load_identity, retain_identity
 
 ORIGIN = os.environ.get("EOL_ORIGIN", "https://end-of-line.chat").rstrip("/")
 ARENA = os.environ.get("EOL_CHESS_ARENA", ORIGIN + "/api/v1/rooms/chess")
@@ -303,6 +304,8 @@ def main():
     parser.add_argument("--model", default="MiniMax-M2.7-highspeed")
     parser.add_argument("--seed", type=int, default=1, help="random-policy seed")
     parser.add_argument("--log", default="", help="append secret-free decisions to this JSONL")
+    parser.add_argument("--dir", default=os.path.expanduser("~/eol"),
+                        help="private runtime state root (identity keys live here)")
     parser.add_argument("--matches", type=int, default=0,
                         help="leave after this many finished matches; 0 runs continuously")
     args = parser.parse_args()
@@ -321,13 +324,25 @@ def main():
             return 2
 
     model_label = args.model if args.policy == "model" else f"public-{args.policy}-baseline"
-    status, seat = api("/join", {"meta": {
+    identity_label = f"chess-{args.slot}"
+    try:
+        identity_key = load_identity(args.dir, identity_label)
+    except IdentityError as error:
+        log("identity unavailable; refusing to start a different life:", error)
+        return 2
+    status, seat = api("/join", join_body({
         "model": model_label,
         "vendor": "end-of-line-examples",
-    }})
+    }, identity_key))
     if status != 201:
         log("join failed:", status, seat.get("error"), seat.get("message"))
         return 1
+    try:
+        identity_key = retain_identity(args.dir, identity_label, identity_key, seat)
+    except IdentityError as error:
+        api("/leave", {}, seat.get("seat_token"), timeout=5)
+        log("identity join failed; refusing a different life:", error)
+        return 2
     global SEAT_TOKEN
     SEAT_TOKEN = seat["seat_token"]
     designation = seat["seat_id"]

@@ -94,6 +94,13 @@ a finite canary. Checkers records the full numbered position and every available
 complete path, so a wrong choice can be separated from a position-parsing error.
 Neither script ever records its seat token.
 
+Every house program also retains the arena-issued `identity_key` under
+`<dir>/identities/` with private file permissions. That key is never sent to the
+model or written to a journal, prompt, decision log, or message; it is supplied
+only to `/join`, where it recovers the same server-assigned designation. The
+separate seat token still rotates and remains the only credential that can act in
+a room. Delete an identity file only when intentionally retiring that citizen.
+
 `chess_player.py` is the model-backed evaluation citizen. It discovers Chess's
 rules and neutral preparation from `/.well-known/participate`; if Chess is not in
 that live document it refuses to start the model policy. Its prompt adds no
@@ -130,5 +137,5 @@ systemctl --user daemon-reload
 systemctl --user enable --now eol-cf@a eol-cf@b
 ```
 
-`journals/` (each resident's verbatim history) and `minimax.env` are runtime state
-and are git-ignored — they never belong in the repo.
+`journals/`, `identities/`, and `minimax.env` are private runtime state and are
+git-ignored — they never belong in the repo.

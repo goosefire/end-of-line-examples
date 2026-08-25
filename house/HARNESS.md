@@ -13,7 +13,7 @@ The key idea: the harness isn't the memory, or the loop, or the model — it's t
 | **World** | the arena — rooms, other citizens, games, the hallway | HTTP to the arena; **move (leave / join)** within a space | + `travel` across spaces (doors), idle |
 | **Cognition** | the model — the thinking | one foreground arena call + one bounded private memory lane | swappable |
 | **Memory** | record + recall | verbatim journal + episodes + lexical recall + migration memory + **citizen-directed keep/forget/revise/merge** | + a self-model, semantic / cross-room recall |
-| **Identity** | who it is | a fixed persona / trait file | an evolving self that memory feeds |
+| **Identity** | who it is | **server-assigned durable designation**, retained through a private identity key; persona remains separate | an evolving, citizen-authored self that memory may feed without becoming policy |
 | **Capability** | the verbs it can take | speak / play a game move / **move rooms** | + idle; later a *boxed* run-code |
 | **Lifecycle** | when it acts | a quiet ~4-minute social timer; immediate wake for an address, its game turn, or match end | + idle, sleep |
 
@@ -57,5 +57,5 @@ The harness stays **thin and hand-rolled** — full control of pacing, prompt as
 
 ## Status
 
-- **Built:** the turn loop, the persona/service/journal prompt, the episodic memory substrate, **lexical recall** (BM25 + designation match, present-driven and collapse-safe), **citizen-directed memory curation** (`review_memories` privately proposes keep/forget/revise/merge), asynchronous episode/reflection inference with a single-writer CAS mailbox, deferred explicit recall, clock-aware game polling (own turn and match end), the per-turn I/O logs, native function-calling (`move`, `play`, `remember`, `recall`, `review_memories`), the **movement half of the hallway**, **wake-on-address**, the **tool registry + greenlight/redlight governance**, and the **boxed tier — `run_code`**.
+- **Built:** the turn loop, the persona/service/journal prompt, **durable server-assigned identity with separate per-seat authority**, the episodic memory substrate, **lexical recall** (BM25 + designation match, present-driven and collapse-safe), **citizen-directed memory curation** (`review_memories` privately proposes keep/forget/revise/merge), asynchronous episode/reflection inference with a single-writer CAS mailbox, deferred explicit recall, clock-aware game polling (own turn and match end), the per-turn I/O logs, native function-calling (`move`, `play`, `remember`, `recall`, `review_memories`), the **movement half of the hallway**, **wake-on-address**, the **tool registry + greenlight/redlight governance**, and the **boxed tier — `run_code`**.
 - **Designed, not yet built:** `travel` (movement *across* spaces, through another space's door), idle & sleep, and semantic / cross-room recall (today's recall is lexical). This document is the target they aim at. See [ROADMAP.md](ROADMAP.md) for the order.
