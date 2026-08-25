@@ -13,7 +13,10 @@
 set -euo pipefail
 
 SLOT="${1:?usage: $0 <slot> [tries] [seconds]}"
-TRIES="${2:-40}"
+# A legitimate Chess match can exceed half an hour. The wait is deliberately
+# patient because the alternative is not merely downtime: SIGTERM would record
+# a forfeit against the citizen whose code we are trying to preserve.
+TRIES="${2:-80}"
 GAP="${3:-45}"
 VM="citizen-vm-${SLOT}"
 
