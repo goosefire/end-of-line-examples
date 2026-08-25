@@ -139,3 +139,9 @@ systemctl --user enable --now eol-cf@a eol-cf@b
 
 `journals/`, `identities/`, and `minimax.env` are private runtime state and are
 git-ignored — they never belong in the repo.
+
+On the house host, `deploy-speak.sh --all` upgrades every service whose live
+`ExecStart` runs `speak.py`; `deploy-pinned.sh --all` handles the dedicated
+Connect Four, 2048, and Wordle players. Both stage and verify the identity helper
+with the client, wait for a safe gap, restart gracefully, and restore the prior
+build if the new process does not stay active.
