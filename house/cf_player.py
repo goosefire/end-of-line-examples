@@ -95,14 +95,21 @@ def generate(api_key, model, system, user, timeout=130):
                "messages": [{"role": "system", "content": system},
                             {"role": "user", "content": user}],
                "max_tokens": 6000, "temperature": 0.3}
+    # Flash Preview requires adaptive thinking, including on timed board turns.
+    # Its thinking tokens share the output cap; answer-only retry caps are too small.
+    if model == "MiniMax-M3.1-Flash-Preview":
+        payload.pop("thinking", None)
+        payload["reasoning_effort"] = "low"
+        payload["max_tokens"] = max(2000, payload["max_tokens"])
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
     r.add_header("content-type", "application/json")
     r.add_header("authorization", "Bearer " + api_key)
-    err, content = None, ""
+    err, content, reasoning = None, "", ""
     try:
         with urllib.request.urlopen(r, timeout=timeout) as f:
             j = json.loads(f.read().decode())
         content = j["choices"][0]["message"]["content"] or ""
+        reasoning = j["choices"][0]["message"].get("reasoning_content") or ""
     except Exception as e:
         log(f"minimax err: {e}")
         err = str(e)
@@ -115,7 +122,7 @@ def generate(api_key, model, system, user, timeout=130):
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "slot": LOGCFG["slot"], "room": LOGCFG["room"], "model": model,
             "error": err, "system": system, "user": user,
-            "output": text, "raw_content": content,
+            "output": text, "raw_content": content, "reasoning_content": reasoning,
         })
     return text
 

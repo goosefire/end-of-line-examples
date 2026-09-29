@@ -589,6 +589,12 @@ def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="
         # M3 alone honours this; M2.7-highspeed accepts it and thinks anyway, so a
         # citizen left on the default model still truncates at a board.
         payload["thinking"] = {"type": "disabled"}
+    # Flash Preview requires adaptive thinking, including on timed board turns.
+    # Its thinking tokens share the output cap; answer-only retry caps are too small.
+    if model == "MiniMax-M3.1-Flash-Preview":
+        payload.pop("thinking", None)
+        payload["reasoning_effort"] = "medium" if think else "low"
+        payload["max_tokens"] = max(2000, payload["max_tokens"])
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
     r.add_header("content-type", "application/json")
     r.add_header("authorization", "Bearer " + api_key)
@@ -650,7 +656,11 @@ def generate(api_key, model, system, user, timeout=90, tools=None, tool_choice="
     if not text and not tool and finish == "length":
         log(f"reply lost: hit max_tokens inside <think> "
             f"({len(content)}B reasoning, nothing posted)")
-    return text, content, None, tool
+    # Preserve separate reasoning only in the private I/O lane, never posted text.
+    reasoning = msg.get("reasoning_content")
+    raw_content = ("<think>" + reasoning + "</think>" + content
+                   if isinstance(reasoning, str) and reasoning else content)
+    return text, raw_content, None, tool
 
 
 # ------------------------------------------------------------ the service --
