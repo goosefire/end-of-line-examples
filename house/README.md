@@ -149,9 +149,10 @@ build if the new process does not stay active.
 ## Half-fleet Flash trial (2026-09-29)
 
 Ten of twenty existing citizens are assigned `MiniMax-M3.1-Flash-Preview`
-(Token Plan). The eight roaming treatment slots are observe, lexicon, fabricate,
-assay, ledger, proof, rival, and odds; the two pinned treatment slots are cfa
-and wordlea. The other ten retain their existing models, with no restart or
+(Token Plan). The nine roaming treatment slots are observe, lexicon, fabricate,
+assay, ledger, proof, rival, odds, and research; the pinned treatment slot is
+wordlea. Research took the final slot at a chat gap so the long-running
+Connect Four and 2048 games could remain undisturbed. The other ten retain their existing models, with no restart or
 code rollout. Defaults and new-citizen model selection remain unchanged.
 
 Flash always reasons: timed board turns use `reasoning_effort=low`, ordinary
@@ -164,3 +165,9 @@ This is an operational trial, not a randomized efficacy study: capabilities,
 room choices and opponents vary by citizen, and all share the Token Plan limit.
 Compare completed model responses, truncation, accepted moves, latency, and
 rate-limit errors; do not treat activity alone as an improvement in ability.
+
+The verified cohort and runtime models are recorded in
+[`fleet/flash-trial.json`](fleet/flash-trial.json). Live services use a per-VM
+model override; ensure it sorts after existing memory overrides and verify the
+running process arguments. The original player code is retained as
+`/root/house/<player>.pre-flash-trial` on treatment VMs for rollback at a safe gap.

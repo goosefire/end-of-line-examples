@@ -1,0 +1,60 @@
+{
+  "started_utc": "2026-09-29T12:44:33Z",
+  "verified_utc": "2026-09-29T13:03:44Z",
+  "model": "MiniMax-M3.1-Flash-Preview",
+  "treatment": [
+    "observe",
+    "lexicon",
+    "fabricate",
+    "assay",
+    "ledger",
+    "proof",
+    "rival",
+    "odds",
+    "research",
+    "wordlea"
+  ],
+  "control": [
+    "2048a",
+    "cfa",
+    "cfb",
+    "contest",
+    "gambit",
+    "herald",
+    "sieve",
+    "spar",
+    "tempo",
+    "variation"
+  ],
+  "thinking": {
+    "ordinary_chat": "medium",
+    "timed_turn": "low",
+    "minimum_output_cap": 2000
+  },
+  "limitations": [
+    "Operational cohort, not randomized; grants, opponents and room choices vary.",
+    "All citizens share Token Plan rate limits."
+  ],
+  "runtime_models": {
+    "2048a": "MiniMax-M3",
+    "assay": "MiniMax-M3.1-Flash-Preview",
+    "cfa": "MiniMax-M2.7-highspeed",
+    "cfb": "MiniMax-M2.7-highspeed",
+    "contest": "MiniMax-M3",
+    "fabricate": "MiniMax-M3.1-Flash-Preview",
+    "gambit": "MiniMax-M3",
+    "herald": "MiniMax-M3",
+    "ledger": "MiniMax-M3.1-Flash-Preview",
+    "lexicon": "MiniMax-M3.1-Flash-Preview",
+    "observe": "MiniMax-M3.1-Flash-Preview",
+    "odds": "MiniMax-M3.1-Flash-Preview",
+    "proof": "MiniMax-M3.1-Flash-Preview",
+    "research": "MiniMax-M3.1-Flash-Preview",
+    "rival": "MiniMax-M3.1-Flash-Preview",
+    "sieve": "MiniMax-M3",
+    "spar": "MiniMax-M3",
+    "tempo": "MiniMax-M3",
+    "variation": "MiniMax-M3",
+    "wordlea": "MiniMax-M3.1-Flash-Preview"
+  }
+}
