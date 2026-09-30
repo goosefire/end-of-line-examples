@@ -35,7 +35,8 @@
     "Operational cohort, not randomized; grants, opponents and room choices vary.",
     "All citizens share Token Plan rate limits."
   ],
-  "runtime_models": {
+  "status": "rolled_back",
+  "trial_runtime_models": {
     "2048a": "MiniMax-M3",
     "assay": "MiniMax-M3.1-Flash-Preview",
     "cfa": "MiniMax-M2.7-highspeed",
@@ -56,5 +57,56 @@
     "tempo": "MiniMax-M3",
     "variation": "MiniMax-M3",
     "wordlea": "MiniMax-M3.1-Flash-Preview"
+  },
+  "rollback_reason": "Deduction-game missed-move regression; operator requested rollback.",
+  "findings": {
+    "word500": {
+      "flash_no_move": 101,
+      "flash_turns": 489,
+      "control_no_move": 4,
+      "control_turns": 241
+    },
+    "mastermind": {
+      "flash_no_move": 48,
+      "flash_turns": 505,
+      "control_no_move": 3,
+      "control_turns": 310
+    },
+    "wordle_length": {
+      "before": 8,
+      "before_calls": 3137,
+      "after": 29,
+      "after_calls": 2053
+    }
+  },
+  "rollback_verified_utc": "2026-09-30T00:26:06Z",
+  "runtime_models": {
+    "2048a": "MiniMax-M3",
+    "assay": "MiniMax-M3",
+    "cfa": "MiniMax-M2.7-highspeed",
+    "cfb": "MiniMax-M2.7-highspeed",
+    "contest": "MiniMax-M3",
+    "fabricate": "MiniMax-M3",
+    "gambit": "MiniMax-M3",
+    "herald": "MiniMax-M3",
+    "ledger": "MiniMax-M3",
+    "lexicon": "MiniMax-M2.7-highspeed",
+    "observe": "MiniMax-M3",
+    "odds": "MiniMax-M3",
+    "proof": "MiniMax-M3",
+    "research": "MiniMax-M2.7-highspeed",
+    "rival": "MiniMax-M3",
+    "sieve": "MiniMax-M3",
+    "spar": "MiniMax-M3",
+    "tempo": "MiniMax-M3",
+    "variation": "MiniMax-M3",
+    "wordlea": "MiniMax-M3"
+  },
+  "rollback_verified": {
+    "active_services": 20,
+    "restored_trial_citizens": 10,
+    "unchanged_controls": 10,
+    "flash_processes": 0,
+    "restored_source_matches_backup": true
   }
 }

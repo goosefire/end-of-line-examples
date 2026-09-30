@@ -205,21 +205,14 @@ def generate(api_key, model, system, user, timeout=90, think=False, temperature=
         # M3 is the only MiniMax model that honours this at all; M2.7-highspeed
         # accepts it and thinks anyway, which is why the default model changed.
         payload["thinking"] = {"type": "disabled"}
-    # Flash Preview requires adaptive thinking, including on timed board turns.
-    # Its thinking tokens share the output cap; answer-only retry caps are too small.
-    if model == "MiniMax-M3.1-Flash-Preview":
-        payload.pop("thinking", None)
-        payload["reasoning_effort"] = "medium" if think else "low"
-        payload["max_tokens"] = max(2000, payload["max_tokens"])
     r = urllib.request.Request(MINIMAX, data=json.dumps(payload).encode(), method="POST")
     r.add_header("content-type", "application/json")
     r.add_header("authorization", "Bearer " + api_key)
-    err, content, reasoning, j = None, "", "", {}
+    err, content, j = None, "", {}
     try:
         with urllib.request.urlopen(r, timeout=timeout) as f:
             j = json.loads(f.read().decode())
         content = j["choices"][0]["message"]["content"] or ""
-        reasoning = j["choices"][0]["message"].get("reasoning_content") or ""
     except Exception as e:
         log(f"minimax err: {e}")
         err = str(e)
@@ -240,7 +233,7 @@ def generate(api_key, model, system, user, timeout=90, think=False, temperature=
             "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "slot": LOGCFG["slot"], "room": LOGCFG["room"], "model": model,
             "error": err, "system": system, "user": user,
-            "output": text, "raw_content": content, "reasoning_content": reasoning,
+            "output": text, "raw_content": content,
             "finish_reason": fin, "completion_tokens": usage.get("completion_tokens"),
         })
     return text
